@@ -60,4 +60,4 @@ Boot sequence: version banner → arch init → platform early_init → core ini
 
 ## License
 
-TBD
+MIT License
