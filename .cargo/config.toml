@@ -1,0 +1,15 @@
+[build]
+target = "riscv64imac-unknown-none-elf"
+# target = "thumbv8m.main-none-eabihf"
+# target = "thumbv7m-none-eabi"
+
+
+[target.thumbv8m.main-none-eabihf]
+rustflags = ["-C", "link-arg=-Tplatform/qemu-an521/linker.ld"]
+
+[target.thumbv7m-none-eabi]
+rustflags = ["-C", "link-arg=-Tplatform/qemu-an521/linker.ld"]
+
+[target.riscv64imac-unknown-none-elf]
+rustflags = ["-C", "link-arg=-Tplatform/qemu-virt-riscv/linker.ld"]
+

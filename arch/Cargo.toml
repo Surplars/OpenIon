@@ -1,0 +1,25 @@
+[package]
+name = "arch"
+version = "0.1.0"
+authors = ["Surplars <surplars@vip.qq.com>"]
+edition = "2024"
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+kernel = { path = "../kernel" }
+spin = "0.10.0"
+
+[features]
+default = ["s-mode"]
+s-mode = []
+m-mode = []
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+cortex-m = "0.7.7"
+
+[target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]
+riscv = "0.11"
+sbi-rt = "0.0.3"

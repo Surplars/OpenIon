@@ -1,0 +1,30 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+authors = ["Surplars <surplars@vip.qq.com>"]
+edition = "2024"
+
+[lib]
+test = false
+bench = false
+
+[features]
+default = ["use_ionnet"]
+use_smoltcp = ["dep:smoltcp"]
+use_ionnet = []
+
+[dependencies]
+bitflags = "2.11.0"
+heapless = "0.9.2"
+rlsf = "0.2.2"
+smoltcp = { version = "0.13.0", default-features = false, features = [
+	"medium-ethernet",
+	"medium-ip",
+	"proto-ipv4",
+	"socket-dhcpv4",
+	"socket-udp",
+	"socket-tcp",
+	"socket-icmp",
+	"socket-raw",
+], optional = true }
+spin = "0.10.0"

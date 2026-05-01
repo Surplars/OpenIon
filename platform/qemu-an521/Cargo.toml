@@ -1,0 +1,17 @@
+[package]
+name = "an521"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "an521"
+test = false
+bench = false
+
+
+[dependencies]
+kernel = { path = "../../kernel" }
+arch = { path = "../../arch" }
+app = { path = "../../app" }
+cmsdk_uart = { path = "../../drivers/cmsdk_uart" }
+lan9118 ={ path = "../../drivers/lan9118" }

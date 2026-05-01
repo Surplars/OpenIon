@@ -1,0 +1,25 @@
+[package]
+name = "qemu-virt-riscv"
+version = "0.1.0"
+authors = ["Surplars <surplars@vip.qq.com>"]
+edition = "2024"
+
+[[bin]]
+name = "qemu-virt-riscv"
+test = false
+bench = false
+
+[dependencies]
+app = { path = "../../app" }
+arch = { path = "../../arch", default-features = false }
+kernel = { path = "../../kernel" }
+ns16550a = { path = "../../drivers/ns16550a" }
+virtio_blk = { path = "../../drivers/virtio_blk" }
+riscv = "0.11.1"
+spin = "0.10.0"
+sbi-rt = { version = "0.0.3", features = ["legacy"] }
+
+[features]
+default = ["s-mode"]
+m-mode = ["arch/m-mode"]  # 微控制器模式 (纯硬件 M-mode)
+s-mode = ["arch/s-mode"]  # 操作系统/虚拟化模式 (依赖 OpenSBI 运行在 S/HS-mode)

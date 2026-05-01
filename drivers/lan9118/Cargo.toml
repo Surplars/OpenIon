@@ -1,0 +1,13 @@
+[package]
+name = "lan9118"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+bitflags = "2.11.0"
+kernel = { version = "0.1.0", path = "../../kernel" }
+volatile-register = "0.2.2"
