@@ -6,13 +6,13 @@ const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 /// ELF64 header
 #[repr(C, packed)]
 struct Elf64Ehdr {
-    e_ident: [u8; 16],     // Magic + class + data + version + OS/ABI
-    e_type: u16,           // ET_EXEC=2, ET_DYN=3
-    e_machine: u16,        // EM_RISCV=243, EM_AARCH64=183
+    e_ident: [u8; 16], // Magic + class + data + version + OS/ABI
+    e_type: u16,       // ET_EXEC=2, ET_DYN=3
+    e_machine: u16,    // EM_RISCV=243, EM_AARCH64=183
     e_version: u32,
-    e_entry: u64,          // Entry point address
-    e_phoff: u64,          // Program header offset
-    e_shoff: u64,          // Section header offset
+    e_entry: u64, // Entry point address
+    e_phoff: u64, // Program header offset
+    e_shoff: u64, // Section header offset
     e_flags: u32,
     e_ehsize: u16,
     e_phentsize: u16,
@@ -26,14 +26,14 @@ struct Elf64Ehdr {
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct Elf64Phdr {
-    p_type: u32,    // PT_LOAD=1
-    p_flags: u32,   // PF_R=4, PF_W=2, PF_X=1
-    p_offset: u64,  // Offset in file
-    p_vaddr: u64,   // Virtual address
-    p_paddr: u64,   // Physical address
-    p_filesz: u64,  // Size in file
-    p_memsz: u64,   // Size in memory
-    p_align: u64,   // Alignment
+    p_type: u32,   // PT_LOAD=1
+    p_flags: u32,  // PF_R=4, PF_W=2, PF_X=1
+    p_offset: u64, // Offset in file
+    p_vaddr: u64,  // Virtual address
+    p_paddr: u64,  // Physical address
+    p_filesz: u64, // Size in file
+    p_memsz: u64,  // Size in memory
+    p_align: u64,  // Alignment
 }
 
 const PT_LOAD: u32 = 1;

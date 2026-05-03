@@ -1,4 +1,4 @@
-use super::addr::{PhysAddr, PAGE_SIZE};
+use super::addr::{PAGE_SIZE, PhysAddr};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 const MAX_PAGES: usize = 4096;
@@ -15,6 +15,14 @@ pub struct FrameAllocator {
     free_pages: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FrameStats {
+    pub initialized: bool,
+    pub base: PhysAddr,
+    pub total_pages: usize,
+    pub free_pages: usize,
+}
+
 impl FrameAllocator {
     pub const fn new() -> Self {
         const ZERO: AtomicU32 = AtomicU32::new(0);
@@ -29,9 +37,14 @@ impl FrameAllocator {
     /// Initialize with a physical memory region [base, base + size).
     pub unsafe fn init(&mut self, base: PhysAddr, size: usize) {
         self.base_addr = base.page_align();
-        let usable = size - (base.raw() - self.base_addr.raw());
-        self.total_pages = usable / PAGE_SIZE;
+        let adjust = self.base_addr.raw().saturating_sub(base.raw());
+        let usable = size.saturating_sub(adjust);
+        self.total_pages = (usable / PAGE_SIZE).min(MAX_PAGES);
         self.free_pages = self.total_pages;
+
+        for word in self.bitmap.iter() {
+            word.store(0, Ordering::Relaxed);
+        }
 
         for i in 0..self.total_pages {
             let word = i / WORD_BITS;
@@ -100,5 +113,14 @@ impl FrameAllocator {
 
     pub fn free_pages(&self) -> usize {
         self.free_pages
+    }
+
+    pub fn stats(&self) -> FrameStats {
+        FrameStats {
+            initialized: self.total_pages != 0,
+            base: self.base_addr,
+            total_pages: self.total_pages,
+            free_pages: self.free_pages,
+        }
     }
 }

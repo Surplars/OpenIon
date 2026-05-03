@@ -10,11 +10,7 @@ unsafe extern "C" {
 /// Rust-side VM exit handler. Called from assembly after saving guest state.
 /// Returns 0 to resume guest, nonzero to exit to host (value = exit reason).
 #[unsafe(no_mangle)]
-pub extern "C" fn handle_vm_exit(
-    vcpu: *mut VCpuContext,
-    scause: usize,
-    stval: usize,
-) -> usize {
+pub extern "C" fn handle_vm_exit(vcpu: *mut VCpuContext, scause: usize, stval: usize) -> usize {
     let ctx = unsafe { &mut *vcpu };
     ctx.vstval = stval;
 
@@ -69,15 +65,15 @@ fn handle_exception(ctx: &mut VCpuContext, cause: usize, _stval: usize) -> usize
             0 // Resume guest
         }
         // Instruction address misaligned
-        0 => { cause }
+        0 => cause,
         // Illegal instruction
-        2 => { cause }
+        2 => cause,
         // Load page fault
-        13 => { cause }
+        13 => cause,
         // Store page fault
-        15 => { cause }
+        15 => cause,
         // Guest instruction page fault
-        12 => { cause }
-        _ => { cause }
+        12 => cause,
+        _ => cause,
     }
 }

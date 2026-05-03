@@ -1,6 +1,6 @@
-use kernel::mm::addr::{PhysAddr, VirtAddr, PAGE_SHIFT, PAGE_SIZE};
-use kernel::mm::{MemPerms, MmError};
 use core::ptr;
+use kernel::mm::addr::{PAGE_SHIFT, PAGE_SIZE, PhysAddr, VirtAddr};
+use kernel::mm::{MemPerms, MmError};
 
 const PTE_V: u64 = 1 << 0;
 const PTE_R: u64 = 1 << 1;
@@ -21,7 +21,9 @@ struct PageTable {
 
 impl PageTable {
     const fn new() -> Self {
-        Self { entries: [0; PT_ENTRIES] }
+        Self {
+            entries: [0; PT_ENTRIES],
+        }
     }
 
     fn entry(&self, idx: usize) -> u64 {
@@ -52,17 +54,29 @@ impl PageTable {
 
 fn perms_to_pte_bits(perms: MemPerms) -> u64 {
     let mut bits = PTE_V | PTE_A | PTE_D | PTE_U; // User-accessible by default
-    if perms.contains(MemPerms::READ) { bits |= PTE_R; }
-    if perms.contains(MemPerms::WRITE) { bits |= PTE_W; }
-    if perms.contains(MemPerms::EXECUTE) { bits |= PTE_X; }
+    if perms.contains(MemPerms::READ) {
+        bits |= PTE_R;
+    }
+    if perms.contains(MemPerms::WRITE) {
+        bits |= PTE_W;
+    }
+    if perms.contains(MemPerms::EXECUTE) {
+        bits |= PTE_X;
+    }
     bits
 }
 
 fn pte_to_perms(pte: u64) -> MemPerms {
     let mut perms = MemPerms::empty();
-    if pte & PTE_R != 0 { perms |= MemPerms::READ; }
-    if pte & PTE_W != 0 { perms |= MemPerms::WRITE; }
-    if pte & PTE_X != 0 { perms |= MemPerms::EXECUTE; }
+    if pte & PTE_R != 0 {
+        perms |= MemPerms::READ;
+    }
+    if pte & PTE_W != 0 {
+        perms |= MemPerms::WRITE;
+    }
+    if pte & PTE_X != 0 {
+        perms |= MemPerms::EXECUTE;
+    }
     perms
 }
 

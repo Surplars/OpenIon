@@ -13,15 +13,21 @@ const PMPCFG_L: u8 = 1 << 7; // Lock bit
 
 // Address matching modes (in the A field)
 const PMPCFG_A_OFF: u8 = 0b00 << 3;
-const PMPCFG_A_TOR: u8 = 0b01 << 3;   // Top of Range
-const PMPCFG_A_NA4: u8 = 0b10 << 3;   // Naturally aligned 4-byte
+const PMPCFG_A_TOR: u8 = 0b01 << 3; // Top of Range
+const PMPCFG_A_NA4: u8 = 0b10 << 3; // Naturally aligned 4-byte
 const PMPCFG_A_NAPOT: u8 = 0b11 << 3; // Naturally aligned power-of-two
 
 fn perms_to_pmpcfg(perms: MemPerms) -> u8 {
     let mut cfg = PMPCFG_A_NAPOT; // Use NAPOT by default
-    if perms.contains(MemPerms::READ) { cfg |= PMPCFG_R; }
-    if perms.contains(MemPerms::WRITE) { cfg |= PMPCFG_W; }
-    if perms.contains(MemPerms::EXECUTE) { cfg |= PMPCFG_X; }
+    if perms.contains(MemPerms::READ) {
+        cfg |= PMPCFG_R;
+    }
+    if perms.contains(MemPerms::WRITE) {
+        cfg |= PMPCFG_W;
+    }
+    if perms.contains(MemPerms::EXECUTE) {
+        cfg |= PMPCFG_X;
+    }
     cfg
 }
 

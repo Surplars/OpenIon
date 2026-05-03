@@ -4,28 +4,28 @@ use core::arch::global_asm;
 pub fn init_task_stack(stack: &mut [usize], entry: usize) -> usize {
     let stack_top = stack.as_mut_ptr() as usize + stack.len() * core::mem::size_of::<usize>();
     let mut sp = stack_top;
-    
+
     sp &= !0x7;
     sp -= 16 * 4;
-    
-    let frame = sp as *mut u32;
-    
-    unsafe {
-        frame.add(15).write(0x01000000);   // xPSR
-        frame.add(14).write((entry as u32) | 1); // PC with Thumb bit set
-        frame.add(13).write(0xFFFFFFFD);   // LR
 
-        frame.add(12).write(0);            // r12
-        frame.add(11).write(0);            // r3
-        frame.add(10).write(0);            // r2
-        frame.add(9).write(0);             // r1
-        frame.add(8).write(0);             // r0
-        
+    let frame = sp as *mut u32;
+
+    unsafe {
+        frame.add(15).write(0x01000000); // xPSR
+        frame.add(14).write((entry as u32) | 1); // PC with Thumb bit set
+        frame.add(13).write(0xFFFFFFFD); // LR
+
+        frame.add(12).write(0); // r12
+        frame.add(11).write(0); // r3
+        frame.add(10).write(0); // r2
+        frame.add(9).write(0); // r1
+        frame.add(8).write(0); // r0
+
         for i in 0..8 {
-            frame.add(i).write(0);         // r4-r11
+            frame.add(i).write(0); // r4-r11
         }
     }
-    
+
     sp
 }
 
@@ -101,6 +101,11 @@ global_asm!(
 pendsv_handler:
     mrs r0, psp
 
+    ldr r3, =NEXT_TCB
+    ldr r1, [r3]
+    cmp r1, #0
+    beq 2f
+
     stmdb r0!, {{r4-r11}}
 
     ldr r2, =CURRENT_TCB
@@ -125,6 +130,9 @@ pendsv_handler:
 
     msr psp, r0
 
+    bx lr
+
+2:
     bx lr
 
     .pool

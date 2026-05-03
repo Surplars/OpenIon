@@ -11,7 +11,7 @@ members = [
 	"platform/qemu-an521",
 	"platform/qemu-virt-riscv",
 ]
-# 默认情况下不在根目录自动构建所有的 platform
+
 default-members = ["app", "arch", "kernel"]
 
 resolver = "3"

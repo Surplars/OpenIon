@@ -32,18 +32,6 @@ pub fn console() -> Option<&'static (dyn PlatformConsole + Sync)> {
     CONSOLE.get().copied()
 }
 
-fn cpu_id() -> u32 {
-    CPU_PROVIDER.get().map(|p| p.cpu_id()).unwrap_or(0)
-}
-
-/// RISC-V: read mhartid CSR directly.
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-pub fn riscv_cpu_id() -> u32 {
-    let id: usize;
-    unsafe { core::arch::asm!("csrr {}, mhartid", out(reg) id); }
-    id as u32
-}
-
 struct ConsoleWriter;
 
 static WRITER: Mutex<ConsoleWriter> = Mutex::new(ConsoleWriter);
@@ -64,22 +52,19 @@ impl Write for ConsoleWriter {
 
 pub fn _print(args: fmt::Arguments) {
     crate::arch::disable_irq();
-    {
-        let mut writer = WRITER.lock();
+    if let Some(mut writer) = WRITER.try_lock() {
         let _ = writer.write_fmt(args);
     }
     crate::arch::enable_irq();
 }
 
-pub fn log(level: LogLevel, args: fmt::Arguments) {
+pub fn log(_level: LogLevel, args: fmt::Arguments) {
     let ticks = crate::timer::ticks();
     let secs = ticks / 1000;
     let ms = ticks % 1000;
 
     crate::arch::disable_irq();
-    {
-        let mut w = WRITER.lock();
-
+    if let Some(mut w) = WRITER.try_lock() {
         // Timestamp: [  0.000]
         let _ = write!(&mut *w, "[{:>4}.{:03}]", secs, ms);
 

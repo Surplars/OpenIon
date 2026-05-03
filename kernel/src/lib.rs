@@ -1,4 +1,4 @@
-﻿#![no_std]
+#![no_std]
 
 pub mod arch;
 pub mod driver;
@@ -28,6 +28,7 @@ pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
     let config: PlatformConfig = P::config();
     platform::set_config(config);
     kinfo!("config written");
+    mm::init(&config);
     core_init();
     kinfo!("kernel core init done");
 
@@ -83,10 +84,9 @@ fn auto_drivers_init<P: Platform>() {
 
 /// Auto-create device files in /dev for all registered drivers.
 fn register_dev_files() {
-    let dev_dir = fs::resolve_path("/dev");
-    let dev = match dev_dir {
-        Some(d) => d,
-        None => return,
+    let dev = match fs::resolve_path("/dev") {
+        Ok(d) => d,
+        Err(_) => return,
     };
 
     let mut blk_idx: u32 = 0;
@@ -98,7 +98,13 @@ fn register_dev_files() {
             let idx = blk_idx - 1;
             // format "blkN"
             let mut buf = [0u8; 16];
-            let s = if idx == 0 { "blk0" } else if idx == 1 { "blk1" } else { "blk2" };
+            let s = if idx == 0 {
+                "blk0"
+            } else if idx == 1 {
+                "blk1"
+            } else {
+                "blk2"
+            };
             let b = s.as_bytes();
             let len = b.len().min(15);
             buf[..len].copy_from_slice(&b[..len]);
@@ -107,7 +113,13 @@ fn register_dev_files() {
             char_idx += 1;
             let idx = char_idx - 1;
             let mut buf = [0u8; 16];
-            let s = if idx == 0 { "ttyS0" } else if idx == 1 { "ttyS1" } else { "ttyS2" };
+            let s = if idx == 0 {
+                "ttyS0"
+            } else if idx == 1 {
+                "ttyS1"
+            } else {
+                "ttyS2"
+            };
             let b = s.as_bytes();
             let len = b.len().min(15);
             buf[..len].copy_from_slice(&b[..len]);
@@ -115,9 +127,9 @@ fn register_dev_files() {
         };
         let name_str = core::str::from_utf8(&dev_name.0[..dev_name.1]).unwrap_or("");
         match fs::lookup(dev, name_str) {
-            Some(_) => {}
-            None => {
-                fs::create_file(dev, name_str);
+            Ok(_) => {}
+            Err(_) => {
+                let _ = fs::create_file(dev, name_str);
                 kdebug!("VFS: created /dev/{}", name_str);
             }
         }

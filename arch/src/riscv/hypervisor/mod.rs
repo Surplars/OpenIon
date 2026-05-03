@@ -71,7 +71,13 @@ impl VCpuContext {
     }
 
     pub fn reg(&self, reg: usize) -> usize {
-        if reg == 0 { 0 } else if reg < 32 { self.x[reg] } else { 0 }
+        if reg == 0 {
+            0
+        } else if reg < 32 {
+            self.x[reg]
+        } else {
+            0
+        }
     }
 
     /// Configure trap delegation: which traps the guest handles directly.

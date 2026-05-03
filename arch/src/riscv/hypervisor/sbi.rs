@@ -31,8 +31,8 @@ const SBI_ERR_NOT_SUPPORTED: usize = usize::MAX; // -1 in unsigned
 pub fn handle_ecall(ctx: &mut VCpuContext) {
     let eid = ctx.reg(17); // a7 = extension ID
     let fid = ctx.reg(16); // a6 = function ID
-    let a0 = ctx.reg(10);  // a0
-    let _a1 = ctx.reg(11);  // a1
+    let a0 = ctx.reg(10); // a0
+    let _a1 = ctx.reg(11); // a1
     let _a2 = ctx.reg(12); // a2
     let _a3 = ctx.reg(13); // a3
     let _a4 = ctx.reg(14); // a4
@@ -45,7 +45,7 @@ pub fn handle_ecall(ctx: &mut VCpuContext) {
                 asm!("csrw vstimecmp, {}", in(reg) a0);
             }
             ctx.set_reg(10, SBI_SUCCESS); // a0 = error
-            ctx.set_reg(11, 0);           // a1 = value
+            ctx.set_reg(11, 0); // a1 = value
         }
 
         // Legacy console putchar

@@ -1,4 +1,4 @@
-﻿use super::{Driver, DriverResult};
+use super::{Driver, DriverResult};
 
 /// 字符设备 Trait
 /// 用于所有按字节读写的设备流（如 UART, 键盘, 鼠标, 虚拟控制台等）
@@ -48,61 +48,73 @@ pub trait CharDevice: Driver {
     }
 }
 
+use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use spin::Once;
 
 const BUF_SIZE: usize = 128;
 pub struct RxBuffer {
-    data: [u8; BUF_SIZE],
+    data: UnsafeCell<[u8; BUF_SIZE]>,
     head: AtomicUsize,
     tail: AtomicUsize,
 }
 
+unsafe impl Sync for RxBuffer {}
+
 impl RxBuffer {
     pub const fn new() -> Self {
         Self {
-            data: [0; BUF_SIZE],
+            data: UnsafeCell::new([0; BUF_SIZE]),
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
         }
     }
 
-    pub fn push(&mut self, val: u8) -> bool {
+    /// Single-producer push. Intended producer is the UART IRQ handler.
+    pub fn push(&self, val: u8) -> bool {
         let head = self.head.load(Ordering::Relaxed);
         let next_head = (head + 1) % BUF_SIZE;
         if next_head == self.tail.load(Ordering::Acquire) {
             return false;
         }
-        self.data[head] = val;
+        unsafe {
+            (*self.data.get())[head] = val;
+        }
         self.head.store(next_head, Ordering::Release);
         true
     }
 
+    /// Single-consumer pop. Intended consumer is the shell task.
     pub fn pop(&self) -> Option<u8> {
-        // ... (we use exclusive self for simplicity, but actually tail should only be changed by reader)
-// actually let us just implement a non-mutable pop
         let tail = self.tail.load(Ordering::Relaxed);
         if tail == self.head.load(Ordering::Acquire) {
             return None;
         }
-        let val = self.data[tail];
+        let val = unsafe { (*self.data.get())[tail] };
         self.tail.store((tail + 1) % BUF_SIZE, Ordering::Release);
         Some(val)
     }
 }
 
-static mut UART_RX_BUF: RxBuffer = RxBuffer::new();
+static UART_RX_BUF: RxBuffer = RxBuffer::new();
+static RX_POLL_FN: Once<fn() -> Option<u8>> = Once::new();
+
+pub fn set_rx_poll_fn(poll: fn() -> Option<u8>) {
+    RX_POLL_FN.call_once(|| poll);
+}
 
 pub fn push_to_rx_buf(byte: u8) {
-    unsafe {
-        let ptr = core::ptr::addr_of_mut!(UART_RX_BUF);
-        (*ptr).push(byte);
-    }
+    let _ = UART_RX_BUF.push(byte);
 }
 
 pub fn pop_from_rx_buf() -> Option<u8> {
-    unsafe {
-        let ptr = core::ptr::addr_of_mut!(UART_RX_BUF);
-        (*ptr).pop()
+    if let Some(byte) = UART_RX_BUF.pop() {
+        return Some(byte);
     }
-}
 
+    let poll = *RX_POLL_FN.get()?;
+    crate::arch::disable_irq();
+    let byte = poll();
+    crate::arch::enable_irq();
+    byte.or_else(|| UART_RX_BUF.pop())
+}

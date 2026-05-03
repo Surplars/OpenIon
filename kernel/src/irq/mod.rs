@@ -44,8 +44,16 @@ pub fn handle_irq(irqn: usize) {
         }
     };
     handler();
+    #[cfg(target_arch = "arm")]
+    if crate::sched::Scheduler::schedule_if_preempt_pending() {
+        unsafe {
+            if let Some(yield_fn) = crate::arch::YIELD_CPU_FN {
+                yield_fn();
+            }
+        }
+    }
 }
 
 fn default_handler() {
-     panic!("unhandled irq");
+    panic!("unhandled irq");
 }

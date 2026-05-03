@@ -111,6 +111,13 @@ impl ExfatFs {
         }
 
         let mut cluster = self.root_dir_first_cluster;
+        let mut current = ExfatEntry {
+            name: [0u8; 256],
+            name_len: 0,
+            first_cluster: self.root_dir_first_cluster,
+            data_length: 0,
+            is_dir: true,
+        };
         let parts: [&str; 8] = {
             let mut p = [""; 8];
             let mut i = 0;
@@ -124,10 +131,13 @@ impl ExfatFs {
         };
 
         for component in parts.iter() {
-            if component.is_empty() { continue; }
+            if component.is_empty() {
+                continue;
+            }
             let mut found: Option<ExfatEntry> = None;
             let _ = self.list_dir(dev, cluster, &mut |entry| {
-                let name_str = core::str::from_utf8(&entry.name[..entry.name_len]).unwrap_or("");
+                let safe_name_len = entry.name_len.min(255);
+                let name_str = core::str::from_utf8(&entry.name[..safe_name_len]).unwrap_or("");
                 if name_str == *component {
                     found = Some(ExfatEntry {
                         name: entry.name,
@@ -142,6 +152,7 @@ impl ExfatFs {
                 Some(entry) => {
                     if entry.is_dir {
                         cluster = entry.first_cluster;
+                        current = entry;
                     } else {
                         return Some(entry);
                     }
@@ -149,13 +160,7 @@ impl ExfatFs {
                 None => return None,
             }
         }
-        Some(ExfatEntry {
-            name: [0u8; 256],
-            name_len: 0,
-            first_cluster: cluster,
-            data_length: 0,
-            is_dir: true,
-        })
+        Some(current)
     }
 
     /// Parse the boot sector and initialize the filesystem.
@@ -167,23 +172,57 @@ impl ExfatFs {
         let spc_shift = sector0[109];
         let fat_offset = u32::from_le_bytes([sector0[80], sector0[81], sector0[82], sector0[83]]);
         let fat_length = u32::from_le_bytes([sector0[84], sector0[85], sector0[86], sector0[87]]);
-        let cluster_heap_offset = u32::from_le_bytes([sector0[88], sector0[89], sector0[90], sector0[91]]);
-        let cluster_count = u32::from_le_bytes([sector0[92], sector0[93], sector0[94], sector0[95]]);
-        let root_dir_cluster = u32::from_le_bytes([sector0[96], sector0[97], sector0[98], sector0[99]]);
+        let cluster_heap_offset =
+            u32::from_le_bytes([sector0[88], sector0[89], sector0[90], sector0[91]]);
+        let cluster_count =
+            u32::from_le_bytes([sector0[92], sector0[93], sector0[94], sector0[95]]);
+        let root_dir_cluster =
+            u32::from_le_bytes([sector0[96], sector0[97], sector0[98], sector0[99]]);
 
-        if bps_shift == 0 || spc_shift == 0 {
+        if &sector0[3..11] != b"EXFAT   " {
             return Err(());
         }
 
-        self.bytes_per_sector = 1u32 << bps_shift;
-        self.sectors_per_cluster = 1u32 << spc_shift;
+        if sector0[510] != 0x55 || sector0[511] != 0xAA {
+            return Err(());
+        }
+
+        if !(9..=12).contains(&bps_shift) || spc_shift > 25 {
+            return Err(());
+        }
+
+        let bytes_per_sector = 1u32.checked_shl(bps_shift as u32).ok_or(())?;
+        let sectors_per_cluster = 1u32.checked_shl(spc_shift as u32).ok_or(())?;
+        if bytes_per_sector != 512
+            || sectors_per_cluster == 0
+            || bytes_per_sector.saturating_mul(sectors_per_cluster) as usize > 4096
+        {
+            return Err(());
+        }
+
+        if fat_offset == 0
+            || fat_length == 0
+            || cluster_heap_offset == 0
+            || cluster_count == 0
+            || root_dir_cluster < 2
+            || root_dir_cluster >= cluster_count + 2
+        {
+            return Err(());
+        }
+
+        self.bytes_per_sector = bytes_per_sector;
+        self.sectors_per_cluster = sectors_per_cluster;
         self.fat_offset = fat_offset;
         self.cluster_heap_offset = cluster_heap_offset;
         self.root_dir_first_cluster = root_dir_cluster;
         self.cluster_count = cluster_count;
 
-        crate::kinfo!("exFAT: {} sectors/cluster, {} clusters, root={}",
-            self.sectors_per_cluster, self.cluster_count, self.root_dir_first_cluster);
+        crate::kinfo!(
+            "exFAT: {} sectors/cluster, {} clusters, root={}",
+            self.sectors_per_cluster,
+            self.cluster_count,
+            self.root_dir_first_cluster
+        );
 
         Ok(())
     }
@@ -192,7 +231,8 @@ impl ExfatFs {
         if cluster < 2 {
             return 0;
         }
-        (self.cluster_heap_offset as u64) + ((cluster as u64) - 2) * (self.sectors_per_cluster as u64)
+        (self.cluster_heap_offset as u64)
+            + ((cluster as u64) - 2) * (self.sectors_per_cluster as u64)
     }
 
     fn read_cluster(&self, dev: &dyn BlockDev, cluster: u32, buf: &mut [u8]) -> Result<(), ()> {
@@ -202,9 +242,14 @@ impl ExfatFs {
         for i in 0..sectors {
             let sector = start_sector + i as u64;
             let offset = i as usize * self.bytes_per_sector as usize;
-            if offset + self.bytes_per_sector as usize > buf.len() { break; }
-            dev.read_sector(sector, &mut buf[offset..offset + self.bytes_per_sector as usize])
-                .map_err(|_| ())?;
+            if offset + self.bytes_per_sector as usize > buf.len() {
+                break;
+            }
+            dev.read_sector(
+                sector,
+                &mut buf[offset..offset + self.bytes_per_sector as usize],
+            )
+            .map_err(|_| ())?;
         }
         Ok(())
     }
@@ -214,7 +259,8 @@ impl ExfatFs {
         let fat_index = cluster % (self.bytes_per_sector / 4);
 
         let mut sector_buf = [0u8; 512];
-        dev.read_sector(fat_sector as u64, &mut sector_buf).map_err(|_| ())?;
+        dev.read_sector(fat_sector as u64, &mut sector_buf)
+            .map_err(|_| ())?;
 
         let offset = (fat_index * 4) as usize;
         let next = u32::from_le_bytes([
@@ -245,7 +291,9 @@ impl ExfatFs {
             let mut i = 0;
             while i < num_entries {
                 let entry_type = buf[i * 32];
-                if entry_type == ENTRY_TYPE_UNUSED { break; }
+                if entry_type == ENTRY_TYPE_UNUSED {
+                    break;
+                }
                 if entry_type == ENTRY_TYPE_FILE {
                     let file_attrs = u16::from_le_bytes([buf[i * 32 + 4], buf[i * 32 + 5]]);
                     let is_dir = file_attrs & ATTR_DIRECTORY != 0;
@@ -253,26 +301,32 @@ impl ExfatFs {
                     if i + 1 < num_entries && buf[(i + 1) * 32] == ENTRY_TYPE_STREAM {
                         let stream = &buf[(i + 1) * 32..(i + 2) * 32];
                         let name_len = stream[3] as usize;
-                        let first_cluster = u32::from_le_bytes([
-                            stream[20], stream[21], stream[22], stream[23],
-                        ]);
+                        let first_cluster =
+                            u32::from_le_bytes([stream[20], stream[21], stream[22], stream[23]]);
                         let data_length = u64::from_le_bytes([
-                            stream[24], stream[25], stream[26], stream[27],
-                            stream[28], stream[29], stream[30], stream[31],
+                            stream[24], stream[25], stream[26], stream[27], stream[28], stream[29],
+                            stream[30], stream[31],
                         ]);
 
                         let mut name = [0u8; 256];
                         let mut name_pos = 0;
                         let mut j = i + 2;
-                        while j < num_entries && buf[j * 32] == ENTRY_TYPE_NAME && name_pos < name_len {
+                        while j < num_entries
+                            && buf[j * 32] == ENTRY_TYPE_NAME
+                            && name_pos < name_len
+                        {
                             let name_entry = &buf[j * 32..(j + 1) * 32];
                             for k in 0..15 {
                                 let off = 2 + k * 2;
                                 if off + 1 < 32 {
-                                    let ch = u16::from_le_bytes([name_entry[off], name_entry[off + 1]]);
+                                    let ch =
+                                        u16::from_le_bytes([name_entry[off], name_entry[off + 1]]);
                                     if ch != 0 && name_pos < name_len {
-                                        if ch < 128 { name[name_pos] = ch as u8; }
-                                        else { name[name_pos] = b'?'; }
+                                        if ch < 128 {
+                                            name[name_pos] = ch as u8;
+                                        } else {
+                                            name[name_pos] = b'?';
+                                        }
                                         name_pos += 1;
                                     }
                                 }

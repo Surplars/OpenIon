@@ -2,7 +2,7 @@ use crate::platform::Platform;
 
 pub mod socket;
 
-// struct 
+// struct
 
 pub fn init<P: Platform>() {
     if let Some(_dev) = P::net_device() {
@@ -14,6 +14,3 @@ pub fn init<P: Platform>() {
 pub fn poll() {
     // 你的协议栈的轮询或后续中断处理逻辑
 }
-
-
-

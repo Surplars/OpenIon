@@ -4,7 +4,6 @@
 //! identify the filesystem type from known signatures.
 
 use crate::driver::block::DynBlockDevice;
-use crate::driver::block::BlockDevice;
 
 /// Supported filesystem types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +36,11 @@ pub fn detect_fs(dev: &DynBlockDevice) -> DetectResult {
 
     if !sector0_valid {
         crate::kdebug!("FS detect: {} block 0 read failed", dev.name());
-        return DetectResult { fs_type: FsType::Unknown, sector0, sector0_valid: false };
+        return DetectResult {
+            fs_type: FsType::Unknown,
+            sector0,
+            sector0_valid: false,
+        };
     }
 
     // Print first 64 bytes of sector 0 as hex dump for debugging
@@ -67,13 +70,25 @@ pub fn detect_fs(dev: &DynBlockDevice) -> DetectResult {
     // Try exFAT detection
     if try_detect_exfat(&sector0) {
         crate::kinfo!("FS detect: {} identified as exFAT", dev.name());
-        return DetectResult { fs_type: FsType::Exfat, sector0, sector0_valid: true };
+        return DetectResult {
+            fs_type: FsType::Exfat,
+            sector0,
+            sector0_valid: true,
+        };
     }
 
-    crate::kdebug!("FS detect: {} not recognized (bps_shift={}, spc_shift={})",
-        dev.name(), sector0[108], sector0[109]);
+    crate::kdebug!(
+        "FS detect: {} not recognized (bps_shift={}, spc_shift={})",
+        dev.name(),
+        sector0[108],
+        sector0[109]
+    );
 
-    DetectResult { fs_type: FsType::Unknown, sector0, sector0_valid: true }
+    DetectResult {
+        fs_type: FsType::Unknown,
+        sector0,
+        sector0_valid: true,
+    }
 }
 
 /// Check if sector 0 looks like an exFAT boot sector.
@@ -87,8 +102,11 @@ fn try_detect_exfat(sector0: &[u8; 512]) -> bool {
 
     // Check boot signature
     if sector0[510] != 0x55 || sector0[511] != 0xAA {
-        crate::kdebug!("FS detect: exFAT boot sig mismatch: {:02X}{:02X} (expected 55AA)",
-            sector0[510], sector0[511]);
+        crate::kdebug!(
+            "FS detect: exFAT boot sig mismatch: {:02X}{:02X} (expected 55AA)",
+            sector0[510],
+            sector0[511]
+        );
         return false;
     }
 
@@ -100,11 +118,6 @@ fn try_detect_exfat(sector0: &[u8; 512]) -> bool {
         }
         crate::kdebug!("FS detect: exFAT bps/spc shift is 0");
         return false;
-    }
-
-    // Also accept without OEM check: just check bps/spc shift and boot sig
-    if sector0[108] != 0 && sector0[109] != 0 {
-        return true;
     }
 
     false

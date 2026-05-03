@@ -58,21 +58,29 @@ impl PhysAddr {
 
 impl Add<usize> for PhysAddr {
     type Output = Self;
-    fn add(self, rhs: usize) -> Self { Self(self.0 + rhs) }
+    fn add(self, rhs: usize) -> Self {
+        Self(self.0 + rhs)
+    }
 }
 
 impl AddAssign<usize> for PhysAddr {
-    fn add_assign(&mut self, rhs: usize) { self.0 += rhs; }
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
 }
 
 impl Sub<usize> for PhysAddr {
     type Output = Self;
-    fn sub(self, rhs: usize) -> Self { Self(self.0 - rhs) }
+    fn sub(self, rhs: usize) -> Self {
+        Self(self.0 - rhs)
+    }
 }
 
 impl Sub<Self> for PhysAddr {
     type Output = usize;
-    fn sub(self, rhs: Self) -> usize { self.0 - rhs.0 }
+    fn sub(self, rhs: Self) -> usize {
+        self.0 - rhs.0
+    }
 }
 
 impl fmt::Debug for PhysAddr {
@@ -119,16 +127,22 @@ impl VirtAddr {
 
 impl Add<usize> for VirtAddr {
     type Output = Self;
-    fn add(self, rhs: usize) -> Self { Self(self.0 + rhs) }
+    fn add(self, rhs: usize) -> Self {
+        Self(self.0 + rhs)
+    }
 }
 
 impl AddAssign<usize> for VirtAddr {
-    fn add_assign(&mut self, rhs: usize) { self.0 += rhs; }
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
 }
 
 impl Sub<usize> for VirtAddr {
     type Output = Self;
-    fn sub(self, rhs: usize) -> Self { Self(self.0 - rhs) }
+    fn sub(self, rhs: usize) -> Self {
+        Self(self.0 - rhs)
+    }
 }
 
 impl fmt::Debug for VirtAddr {

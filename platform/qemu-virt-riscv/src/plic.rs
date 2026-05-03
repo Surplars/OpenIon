@@ -12,7 +12,7 @@ pub fn init() {
     // QEMU Virt 的 Context:
     // 0: Hart 0 M-mode
     // 1: Hart 0 S-mode
-    
+
     #[cfg(feature = "m-mode")]
     let context = 0;
 
@@ -39,7 +39,8 @@ pub fn enable_irq(irq: u32, priority: u32) {
         priority_ptr.write_volatile(priority);
 
         // 2. 使能该中断
-        let enable_ptr = (PLIC_ENABLE_BASE + context * 0x80 + ((irq as usize) / 32) * 4) as *mut u32;
+        let enable_ptr =
+            (PLIC_ENABLE_BASE + context * 0x80 + ((irq as usize) / 32) * 4) as *mut u32;
         let mut val = enable_ptr.read_volatile();
         val |= 1 << (irq % 32);
         enable_ptr.write_volatile(val);

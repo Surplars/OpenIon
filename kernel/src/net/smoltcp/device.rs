@@ -1,4 +1,4 @@
-﻿use crate::driver::net::DynNetDevice;
+use crate::driver::net::DynNetDevice;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
 
@@ -44,14 +44,24 @@ impl<'a> TxToken for SmoltcpTxToken<'a> {
 }
 
 impl<'a> Device for SmoltcpDevice<'a> {
-    type RxToken<'b> = SmoltcpRxToken<'b> where Self: 'b;
-    type TxToken<'b> = SmoltcpTxToken<'b> where Self: 'b;
+    type RxToken<'b>
+        = SmoltcpRxToken<'b>
+    where
+        Self: 'b;
+    type TxToken<'b>
+        = SmoltcpTxToken<'b>
+    where
+        Self: 'b;
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         if self.device.has_rx_data() {
             Some((
-                SmoltcpRxToken { device: self.device },
-                SmoltcpTxToken { device: self.device },
+                SmoltcpRxToken {
+                    device: self.device,
+                },
+                SmoltcpTxToken {
+                    device: self.device,
+                },
             ))
         } else {
             None
@@ -59,7 +69,9 @@ impl<'a> Device for SmoltcpDevice<'a> {
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
-        Some(SmoltcpTxToken { device: self.device })
+        Some(SmoltcpTxToken {
+            device: self.device,
+        })
     }
 
     fn capabilities(&self) -> DeviceCapabilities {

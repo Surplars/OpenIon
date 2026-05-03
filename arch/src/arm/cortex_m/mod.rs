@@ -1,4 +1,3 @@
-
 pub mod context;
 pub mod irq;
 pub mod nvic;
@@ -29,4 +28,3 @@ impl kernel::arch::Arch for CortexM {
         context::start_first_task();
     }
 }
-

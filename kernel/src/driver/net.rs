@@ -25,4 +25,5 @@ pub trait NetDevice: Driver {
     /// The number of bytes received.
     fn receive(&self, buf: &mut [u8]) -> DriverResult<usize>;
 }
-pub type DynNetDevice = dyn NetDevice<Config = crate::driver::GenericDeviceConfig, Error = crate::driver::DriverErr>;
+pub type DynNetDevice =
+    dyn NetDevice<Config = crate::driver::GenericDeviceConfig, Error = crate::driver::DriverErr>;

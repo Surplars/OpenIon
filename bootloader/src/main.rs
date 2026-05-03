@@ -12,5 +12,5 @@ pub extern "C" fn bootloader_entry() {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-	loop {}
+    loop {}
 }

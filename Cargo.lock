@@ -229,8 +229,6 @@ dependencies = [
  "arch",
  "kernel",
  "ns16550a",
- "riscv",
- "sbi-rt",
  "spin",
  "virtio_blk",
 ]

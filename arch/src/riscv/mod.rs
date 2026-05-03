@@ -2,7 +2,9 @@ pub mod context;
 pub mod hypervisor;
 pub mod irq;
 pub mod pmp;
+pub mod sbi;
 pub mod sv39;
+pub mod timer;
 pub mod trap;
 
 pub struct RiscvArch;

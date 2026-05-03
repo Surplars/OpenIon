@@ -12,7 +12,8 @@ ifeq ($(PLAT), qemu-virt-riscv)
 	-kernel target/$(TARGET)/debug/$(PKG) \
 	-global virtio-mmio.force-legacy=false \
     -device virtio-blk-device,drive=hd0 \
-    -drive if=none,file=sd.img,format=raw,id=hd0
+    -drive if=none,file=sd.img,format=raw,id=hd0 \
+	-s
 else ifeq ($(PLAT), qemu-an521)
 	PKG = an521
 	TARGET = thumbv8m.main-none-eabihf

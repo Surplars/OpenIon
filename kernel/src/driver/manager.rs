@@ -1,4 +1,4 @@
-use super::{DeviceState, Driver, DriverErr, DriverResult, DriverFactory};
+use super::{DeviceResource, DeviceState, Driver, DriverErr, DriverFactory, DriverResult};
 use crate::sync::Mutex;
 
 pub trait AnyDriver: Send + Sync {
@@ -13,24 +13,43 @@ pub trait AnyDriver: Send + Sync {
 }
 
 impl<T: Driver> AnyDriver for T {
-    fn name(&self) -> &'static str { self.name() }
-    fn auto_init(&self) -> DriverResult<()> { self.init() }
-    fn handle_irq(&self, irq_id: u32) -> bool { self.handle_irq(irq_id) }
-    fn check_health(&self) -> DriverResult<()> { self.check_health() }
-    fn power_on(&self) -> DriverResult<()> { self.power_on() }
-    fn power_off(&self) -> DriverResult<()> { self.power_off() }
-    fn state(&self) -> DeviceState { self.state() }
-    fn as_block_device(&self) -> Option<&'static super::block::DynBlockDevice> { self.as_block_device() }
+    fn name(&self) -> &'static str {
+        self.name()
+    }
+    fn auto_init(&self) -> DriverResult<()> {
+        self.init()
+    }
+    fn handle_irq(&self, irq_id: u32) -> bool {
+        self.handle_irq(irq_id)
+    }
+    fn check_health(&self) -> DriverResult<()> {
+        self.check_health()
+    }
+    fn power_on(&self) -> DriverResult<()> {
+        self.power_on()
+    }
+    fn power_off(&self) -> DriverResult<()> {
+        self.power_off()
+    }
+    fn state(&self) -> DeviceState {
+        self.state()
+    }
+    fn as_block_device(&self) -> Option<&'static super::block::DynBlockDevice> {
+        self.as_block_device()
+    }
 }
 
 const MAX_DRIVERS: usize = 32;
 const MAX_FACTORIES: usize = 16;
+pub const DRIVER_SNAPSHOT_CAP: usize = MAX_DRIVERS;
 
 /// Registered drivers (manual + auto-probed).
-static DRIVERS: Mutex<[Option<&'static dyn AnyDriver>; MAX_DRIVERS]> = Mutex::new([None; MAX_DRIVERS]);
+static DRIVERS: Mutex<[Option<&'static dyn AnyDriver>; MAX_DRIVERS]> =
+    Mutex::new([None; MAX_DRIVERS]);
 
 /// Registered driver factories for FDT auto-probing.
-static FACTORIES: Mutex<[Option<&'static dyn DriverFactory>; MAX_FACTORIES]> = Mutex::new([None; MAX_FACTORIES]);
+static FACTORIES: Mutex<[Option<&'static dyn DriverFactory>; MAX_FACTORIES]> =
+    Mutex::new([None; MAX_FACTORIES]);
 
 pub struct DriverManager;
 
@@ -80,9 +99,9 @@ impl DriverManager {
     }
 
     pub fn dispatch_irq(irq_id: u32) -> bool {
-        let table = DRIVERS.lock();
-        for slot in table.iter() {
-            if let Some(driver) = slot {
+        let snapshot = Self::drivers_snapshot();
+        for slot in snapshot.iter() {
+            if let Some(driver) = *slot {
                 if driver.handle_irq(irq_id) {
                     return true;
                 }
@@ -93,12 +112,22 @@ impl DriverManager {
 
     /// Iterate over all registered drivers. Used by VFS for block device discovery.
     pub fn for_each_driver(mut f: impl FnMut(&dyn AnyDriver)) {
-        let table = DRIVERS.lock();
-        for slot in table.iter() {
-            if let Some(driver) = slot {
-                f(*driver);
+        let snapshot = Self::drivers_snapshot();
+
+        for slot in snapshot.iter() {
+            if let Some(driver) = *slot {
+                f(driver);
             }
         }
+    }
+
+    pub fn drivers_snapshot() -> [Option<&'static dyn AnyDriver>; MAX_DRIVERS] {
+        let table = DRIVERS.lock();
+        let mut snapshot = [None; MAX_DRIVERS];
+        for (dst, src) in snapshot.iter_mut().zip(table.iter()) {
+            *dst = *src;
+        }
+        snapshot
     }
 
     // ---- Factory registration & FDT auto-probe ----
@@ -124,7 +153,14 @@ impl DriverManager {
             return 0;
         }
 
-        let factories = FACTORIES.lock();
+        let factories = {
+            let table = FACTORIES.lock();
+            let mut snapshot = [None; MAX_FACTORIES];
+            for (dst, src) in snapshot.iter_mut().zip(table.iter()) {
+                *dst = *src;
+            }
+            snapshot
+        };
         let mut count = 0usize;
 
         unsafe {
@@ -133,22 +169,27 @@ impl DriverManager {
                     return;
                 }
                 let base_addr = u64::from_be_bytes([
-                    reg[0], reg[1], reg[2], reg[3],
-                    reg[4], reg[5], reg[6], reg[7],
+                    reg[0], reg[1], reg[2], reg[3], reg[4], reg[5], reg[6], reg[7],
                 ]) as usize;
-                let _size = u64::from_be_bytes([
-                    reg[8], reg[9], reg[10], reg[11],
-                    reg[12], reg[13], reg[14], reg[15],
-                ]);
+                let size = u64::from_be_bytes([
+                    reg[8], reg[9], reg[10], reg[11], reg[12], reg[13], reg[14], reg[15],
+                ]) as usize;
+                let resource = DeviceResource::new(base_addr, size, interrupt);
 
                 for factory in factories.iter() {
-                    if let Some(f) = factory {
+                    if let Some(f) = *factory {
                         for &c in f.compatible() {
                             if compat == c {
-                                if let Some(driver) = f.probe(base_addr, interrupt) {
+                                if let Some(driver) = f.probe(resource) {
                                     if Self::register_driver(driver).is_ok() {
                                         if driver.auto_init().is_ok() {
-                                            crate::kdebug!("FDT auto: {} @{:#x} irq={}", driver.name(), base_addr, interrupt);
+                                            crate::kdebug!(
+                                                "FDT auto: {} @{:#x}+{:#x} irq={}",
+                                                driver.name(),
+                                                resource.base_addr,
+                                                resource.size,
+                                                resource.irq
+                                            );
                                         }
                                         count += 1;
                                     }

@@ -1,6 +1,6 @@
-﻿use spin::Mutex;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
+use spin::Mutex;
 
 /// Static Object Pool
 pub struct Slab<T, const N: usize> {
@@ -41,7 +41,9 @@ impl<T, const N: usize> Slab<T, N> {
             inner.free_count -= 1;
 
             let ptr = inner.data[idx].as_mut_ptr();
-            unsafe { core::ptr::write(ptr, val); }
+            unsafe {
+                core::ptr::write(ptr, val);
+            }
             Some(unsafe { NonNull::new_unchecked(ptr) })
         } else {
             None
@@ -51,24 +53,26 @@ impl<T, const N: usize> Slab<T, N> {
     pub unsafe fn free(&self, ptr: NonNull<T>) {
         let p = ptr.as_ptr();
         let mut inner = self.inner.lock();
-        
+
         let base = inner.data.as_ptr() as *const _ as usize;
         let p_usize = p as usize;
         let step = core::mem::size_of::<MaybeUninit<T>>();
-        
+
         let idx = (p_usize - base) / step;
         if idx >= N {
             return;
         }
 
-        unsafe { core::ptr::drop_in_place(p); }
+        unsafe {
+            core::ptr::drop_in_place(p);
+        }
 
         if let Some(head) = inner.free_head {
             inner.next_free[idx] = head;
         } else {
             inner.next_free[idx] = N;
         }
-        
+
         inner.free_head = Some(idx);
         inner.free_count += 1;
     }
@@ -77,4 +81,3 @@ impl<T, const N: usize> Slab<T, N> {
         self.inner.lock().free_count
     }
 }
-

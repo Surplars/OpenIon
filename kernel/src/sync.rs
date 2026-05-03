@@ -1,8 +1,8 @@
-use core::ops::{Deref, DerefMut};
+use crate::arch::{disable_irq, enable_irq};
 use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
 use spin::Mutex as SpinMutex;
 use spin::MutexGuard as SpinMutexGuard;
-use crate::arch::{disable_irq, enable_irq};
 
 /// RTOS 中断安全互斥锁 (IRQ-safe Mutex)
 ///
@@ -40,8 +40,8 @@ impl<T: ?Sized> Mutex<T> {
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         disable_irq();
         match self.inner.try_lock() {
-            Some(guard) => Some(MutexGuard { 
-                inner_guard: ManuallyDrop::new(guard) 
+            Some(guard) => Some(MutexGuard {
+                inner_guard: ManuallyDrop::new(guard),
             }),
             None => {
                 enable_irq(); // 没获取到锁，立刻恢复中断状态

@@ -1,4 +1,3 @@
-
 pub fn init(system_freq_hz: u32, tick_freq_hz: u32) {
     let reload_val = (system_freq_hz / tick_freq_hz) - 1;
 

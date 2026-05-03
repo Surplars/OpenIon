@@ -22,6 +22,7 @@ pub struct TaskControlBlock {
     pub entry: fn() -> !,
     pub name: &'static str,
     pub next: *mut TaskControlBlock,
+    pub queued: bool,
 }
 
 impl TaskControlBlock {
@@ -43,10 +44,10 @@ impl TaskControlBlock {
             entry,
             name,
             next: core::ptr::null_mut(),
+            queued: false,
         }
     }
 }
 
 unsafe impl Send for TaskControlBlock {}
 unsafe impl Sync for TaskControlBlock {}
-

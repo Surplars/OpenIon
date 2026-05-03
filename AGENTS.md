@@ -2,107 +2,212 @@
 
 ## Project Overview
 
-Bare-metal RTOS ("OpenIon") in Rust. `#![no_std]`, `#![no_main]`, no host tests. Runs on QEMU-emulated targets only. Long-term goal: RISC-V Type-1 hypervisor.
+OpenIon is a bare-metal RTOS in Rust. It uses `#![no_std]` and `#![no_main]`,
+has no host test suite, and currently runs on QEMU-emulated targets only.
 
-## Build & Run
+The long-term goal is a RISC-V Type-1 hypervisor. The current stable baseline is
+the RTOS kernel: scheduler, shell, VFS, VirtIO block I/O, driver framework,
+memory management, and clean module boundaries.
+
+## Build And Run
 
 ```bash
-make build PLAT=qemu-virt-riscv    # build RISC-V 64 platform
-make build PLAT=qemu-an521         # build ARM Cortex-M platform
-make run   PLAT=qemu-virt-riscv    # build + launch in QEMU (blocks terminal)
+make build PLAT=qemu-virt-riscv
+make build PLAT=qemu-an521
+make run   PLAT=qemu-virt-riscv
 make run   PLAT=qemu-an521
 ```
 
-- **Never use `make run` in agent sessions** — QEMU blocks the terminal and cannot be interrupted. Always use `make build`.
-- `default-members` in root `Cargo.toml` is `["app", "arch", "kernel"]` — platform crates must be built explicitly via `-p` or `make`.
-- Active default target is set in `.cargo/config.toml` (comment/uncomment `target = ...`). The Makefile overrides this with `--target`.
-- Requires **Rust nightly** (`rust-toolchain.toml`).
-- No `cargo test` — all crates set `test = false`. No CI workflows exist.
-
-## Directory Layout
-
-| Directory | Role |
-|---|---|
-| `kernel/` | Core kernel — scheduler, IRQ, memory, VFS framework, net stack framework, driver framework, logging, version. **Fully architecture-agnostic.** |
-| `arch/` | Architecture-specific code. `riscv/` and `arm/cortex_m/` selected by `#[cfg(target_arch)]`. Implements kernel arch traits. |
-| `drivers/` | Device drivers. May be generic (e.g. `ns16550a`) or platform-specific (e.g. `cmsdk_uart`). Each driver is a separate crate. |
-| `platform/` | Board/SoC binaries. Each contains `startup.s`, `main.rs`, linker script, and platform-specific peripherals (PLIC, timer, etc.). |
-| `app/` | User tasks (shell, test tasks). Contains `root_task()` — the first task the kernel spawns. |
-| `bootloader/` | Placeholder, not yet used. |
+- Never use `make run` in agent sessions. QEMU blocks the terminal and may not
+  be interruptible from the tool session. Use `make build` only.
+- The root `Cargo.toml` default members are `["app", "arch", "kernel"]`.
+  Platform crates must be built explicitly with `make build PLAT=...` or
+  `cargo build -p <platform-crate> --target <target>`.
+- Requires Rust nightly through `rust-toolchain.toml`.
+- No `cargo test`: crates set `test = false`, and there is no CI test harness.
+- Do not treat warnings in unrelated experimental code as part of a requested
+  fix unless the user asks for warning cleanup.
 
 ## Workspace Crates
 
-| Crate | Path |
+| Crate | Path | Role |
+|---|---|---|
+| `kernel` | `kernel/` | Architecture-neutral kernel core |
+| `arch` | `arch/` | ISA/CPU-specific code |
+| `app` | `app/` | Root task and shell |
+| `qemu-virt-riscv` | `platform/qemu-virt-riscv/` | RISC-V 64 platform binary |
+| `an521` | `platform/qemu-an521/` | ARM Cortex-M33 platform binary |
+| `ns16550a` | `drivers/ns16550a/` | NS16550A UART driver |
+| `cmsdk_uart` | `drivers/cmsdk_uart/` | CMSDK UART driver |
+| `lan9118` | `drivers/lan9118/` | LAN9118 Ethernet driver |
+| `virtio_blk` | `drivers/virtio_blk/` | VirtIO MMIO block driver |
+| `bootloader` | `bootloader/` | Placeholder |
+
+## Module Boundaries
+
+Keep these boundaries strict:
+
+| Layer | Allowed responsibilities |
 |---|---|
-| `kernel` | `kernel/` |
-| `arch` | `arch/` |
-| `app` | `app/` |
-| `qemu-virt-riscv` | `platform/qemu-virt-riscv/` — RISC-V 64. Entry: `rust_main()` |
-| `an521` | `platform/qemu-an521/` — ARM Cortex-M33. Entry: `platform_init()` |
-| `ns16550a` | `drivers/ns16550a/` — NS16550A UART driver (used by qemu-virt-riscv) |
-| `cmsdk_uart` | `drivers/cmsdk_uart/` — CMSDK UART driver (used by an521) |
-| `lan9118` | `drivers/lan9118/` — LAN9118 Ethernet driver (used by an521) |
-| `virtio_blk` | `drivers/virtio_blk/` — VirtIO block device driver (used by qemu-virt-riscv) |
-| `bootloader` | `bootloader/` — placeholder |
+| `kernel/` | Platform-neutral and architecture-neutral kernel logic, traits, registries, scheduler, VFS, memory, logging, networking abstractions |
+| `arch/` | ISA and CPU details: assembly, CSR access, trap vectors, context switching, SBI helpers, ARM NVIC helpers |
+| `platform/` | Board/SoC details: MMIO base addresses, PLIC/CLINT wiring, startup assembly, linker scripts, platform driver instances |
+| `drivers/` | Device protocol implementation behind kernel driver traits |
+| `app/` | Root task and user-facing kernel apps such as the shell |
+
+Do not put RISC-V CSR access or inline assembly in `kernel/` or platform code
+when an `arch/src/riscv` helper is appropriate. Do not put QEMU virt MMIO
+addresses into `arch/`; they belong in `platform/qemu-virt-riscv`.
 
 ## Boot Flow
 
-1. Platform `startup.s` sets up stack, calls Rust entry.
-2. Entry calls `kernel::boot::<Platform, Arch>(root_task)`.
-3. Kernel boot: **version banner** → `arch::init` → `Platform::early_init` (UART, PLIC/NVIC, console, timer, IRQ handler registration) → core init (timer, IRQ table, scheduler) → driver registration via `DriverManager` → net init → spawn `root_task` → `Arch::start_first_task()`.
+1. Platform startup assembly sets the initial stack and calls the Rust entry.
+2. Platform entry clears BSS, stores platform boot data such as `hartid` and
+   DTB address, sets an early trap vector if needed, then calls
+   `kernel::boot::<Platform, Arch>(root_task)`.
+3. `kernel::boot` initializes architecture hooks, runs `Platform::early_init`,
+   prints the version banner, writes `PlatformConfig`, initializes memory and
+   core kernel services, auto-probes FDT drivers, registers platform drivers,
+   initializes VFS and device files, initializes networking, spawns root tasks,
+   schedules the first task, and enters `Arch::start_first_task()`.
 
-## Feature Flags: s-mode vs m-mode (RISC-V)
+## RISC-V Mode Notes
 
-The `arch` and `qemu-virt-riscv` crates have `s-mode` (default) and `m-mode` features that control RISC-V privilege level:
+`qemu-virt-riscv` defaults to `s-mode`, running on SBI firmware. The `arch` and
+platform crates also expose `m-mode` features, but the default linker layout is
+for the SBI jump target.
 
-- **s-mode**: Kernel runs in Supervisor mode on top of OpenSBI/RustSBI. Uses `sie::set_sext()` for IRQs, SBI timer, `sstatus::set_sie()`. Entry point is `rust_main(hartid, dtb_pa)`.
-- **m-mode**: Kernel runs in Machine mode directly on hardware. Uses `mie::set_mext()` for IRQs, CLINT timer, `mstatus::set_mie()`.
-
-The default is `s-mode`. To build for m-mode pass `--features m-mode --no-default-features`. The linker script base address (`0x80200000`) is set for OpenSBI jump target; m-mode would need a different linker script.
+- S-mode uses supervisor CSRs, SBI timer setup, and `sstatus::set_sie()`.
+- M-mode uses machine CSRs, CLINT timer compare, and `mstatus::set_mie()`.
+- RISC-V CSR and SBI access should stay under `arch/src/riscv`.
+- QEMU virt PLIC and CLINT addresses should stay under
+  `platform/qemu-virt-riscv`.
 
 ## Interrupt Architecture
 
-### RISC-V (qemu-virt-riscv)
-- External interrupts go through **PLIC** (Platform-Level Interrupt Controller).
-- Trap handler (`arch/src/riscv/trap.rs`) detects `SupervisorExternal` / `MachineExternal` cause and calls `EXTERNAL_IRQ_HANDLER` function pointer.
-- Platform sets `EXTERNAL_IRQ_HANDLER` in `early_init` to do PLIC claim → `DriverManager::dispatch_irq` → PLIC complete.
-- CPU external interrupt enable: `sie::set_sext()` (S-mode) or `mie::set_mext()` (M-mode).
-- QEMU Virt NS16550A UART is at `0x1000_0000`, IRQ 10.
-- DTB address is hardcoded at `0x8006_8000` in `main.rs` (set via `kernel::platform::set_dtb_addr()`).
+### RISC-V `qemu-virt-riscv`
 
-### ARM (qemu-an521)
-- External interrupts go through **NVIC**.
-- Vector table in `startup.s` maps IRQ numbers to handler symbols (e.g. `uart0_rx_handler` at IRQ 0 position).
-- Handlers call `kernel::irq::handle_irq(N)` which dispatches via registered IRQ table.
-- AN521 UART RX = IRQ 0, LAN9118 Ethernet = IRQ 48.
+- External interrupts go through the platform PLIC.
+- `arch/src/riscv/trap.rs` detects timer, external, and yield traps.
+- The platform sets `kernel::arch::EXTERNAL_IRQ_HANDLER` during `early_init`.
+- The external IRQ handler claims PLIC, dispatches through
+  `DriverManager::dispatch_irq`, drains UART RX when needed, then completes PLIC.
+- Timer interrupts call `kernel::platform::schedule_next_timer_tick()` so the
+  platform decides the next board-specific deadline.
 
-## Key Kernel Statics
+### ARM `qemu-an521`
 
-- `kernel::arch::EXTERNAL_IRQ_HANDLER` — function pointer set by each platform in `early_init()`. The RISC-V trap handler calls this to dispatch external interrupts. ARM platforms do not use it (they call `kernel::irq::handle_irq(N)` directly from NVIC handlers).
-- `kernel::arch::DISABLE_IRQ_FN` / `ENABLE_IRQ_FN` — set by `arch::init::<A>()`, used by `kernel::arch::disable_irq()` / `enable_irq()` with nesting counter.
+- External interrupts go through NVIC.
+- Startup assembly vector entries call Rust handlers.
+- Handlers call `kernel::irq::handle_irq(N)`, which dispatches the registered
+  IRQ table entry.
 
-## Driver Conventions
+## Driver Framework Rules
 
-- Each driver lives in its own crate under `drivers/`.
-- Drivers implement `kernel::driver::Driver` + optionally `kernel::driver::char::CharDevice` or `kernel::driver::net::NetDevice`.
-- Platform `main.rs` creates `static` driver instances and registers them via `Platform::drivers()`.
-- Console output is set up in `Platform::early_init()` via `kernel::log::set_console()`.
-- The `EXTERNAL_IRQ_HANDLER` pointer (RISC-V only) is set in `Platform::early_init()` and must call `DriverManager::dispatch_irq(irq)`.
-- Driver registration flow: `DriverManager::register_driver()` → `drv.auto_init()` (runs polymorphic native init).
+- Every driver lives in its own crate under `drivers/`.
+- Drivers implement `kernel::driver::Driver`.
+- Character, block, and network drivers additionally implement the matching
+  device class trait.
+- FDT-probed drivers implement `DriverFactory`.
+- `DriverFactory::probe()` accepts `DeviceResource`; do not add new probe APIs
+  that pass raw `base_addr, irq` pairs.
+- Static probed driver instances should use `StaticDriverPool`.
+- Use `DriverManager::drivers_snapshot()` or `for_each_driver()` before calling
+  back into drivers. Do not hold the registry lock while printing, doing block
+  I/O, or invoking arbitrary callbacks.
 
-## Memory Allocator
+## FDT Policy
 
-The kernel uses `rlsf` (Rust Linked-list-based Size-class Free-list) v0.2.2 for heap allocation and `heapless` v0.9.2 for fixed-capacity collections. Both are `no_std`-compatible.
+`kernel/src/fdt.rs` is a minimal generic FDT parser. It should not contain
+driver-specific scanners such as "find all VirtIO devices". Device matching
+belongs in driver factories and `DriverManager::auto_probe_fdt()`.
+
+Do not reintroduce per-node boot spam such as `FDT node: compatible=...`.
+Boot logs should only show concise DTB/probe summaries unless the user asks for
+temporary diagnostics.
+
+## Shell, VFS, And Block I/O Baseline
+
+The RISC-V interactive path is expected to stay responsive. These commands must
+return to the prompt:
+
+```text
+ls /dev
+mount
+ls /sd
+mount /dev/blk0 /sd
+mount
+ls /
+ls /dev
+ls /sd
+cd /sd
+```
+
+Important current behavior:
+
+- UART RX uses an IRQ producer and shell consumer path.
+- Shell idle uses `core::hint::spin_loop()`; do not replace it with scheduler
+  delay unless input wakeups are redesigned.
+- VFS exposes stable `NodeId` handles instead of shell-visible raw vnode
+  pointers.
+- RAMFS owns built-in paths such as `/dev`.
+- Mount table iteration uses snapshots.
+- Empty directories should print nothing, not `(empty)`.
+- Mount listing format is `<device> on <mount-point> type <fs>`.
+- VirtIO block reads are internally serialized and should return errors instead
+  of spinning forever.
+
+## Scheduler Baseline
+
+The scheduler has priority-aware ready queues and high-priority preemption
+points. Be careful around idle behavior:
+
+- The idle task should spin, not repeatedly yield into a trap storm.
+- Shell no-input polling should spin, not sleep on a timer-dependent delay.
+- Timer and external IRQ paths may request preemption, but should keep IRQ work
+  short and avoid console output while holding locks.
+
+## Memory
+
+The kernel uses fixed-capacity structures on core paths for MCU compatibility.
+`heapless` is available for fixed-capacity collections, and `rlsf` is used for
+heap allocation where appropriate. Do not make shared kernel, shell, VFS, or
+driver-registry paths depend on RISC-V-only heap behavior.
 
 ## Networking
 
-- Kernel supports two backends via features: `use_smoltcp` and `use_ionnet` (default).
-- Net tasks in `app` are currently commented out.
+The kernel supports `use_ionnet` by default and has optional `use_smoltcp`
+support. Network tasks in `app` may be disabled or experimental. Do not treat
+the network stack as a stable acceptance path unless the user asks for it.
 
-## Conventions
+## Hypervisor Status
 
-- Comments and log messages mix Chinese and English.
-- Log macros: `kinfo!`, `kdebug!`, `kerror!`, `kwarn!`, `kpln!`, `kp!` — defined in `kernel::log`.
-- Version: `kernel::version` module, banner printed as first line of `boot()`.
-- Edition 2024 across all crates.
-- VFS is initialized early in boot (after driver init, before net init). File system operations go through `kernel::fs`.
+RISC-V hypervisor code under `arch/src/riscv/hypervisor` is experimental and is
+not the main boot path. Prefer preserving the stable RTOS path before expanding
+hypervisor functionality. Keep hypervisor ISA details under `arch`, and keep
+board/device emulation policy out of `kernel`.
+
+## Coding Conventions
+
+- Prefer existing local patterns over introducing new abstractions.
+- Keep edits scoped to the requested area.
+- Use `rg` for search.
+- Use `apply_patch` for manual edits.
+- Do not revert unrelated dirty worktree changes.
+- Avoid long lock hold times. Do not print, probe devices, or do block I/O while
+  holding global registry or mount locks.
+- Keep core code `no_std` compatible.
+- Prefer ASCII in new docs and comments unless the surrounding file already uses
+  non-ASCII intentionally.
+
+## Verification
+
+For a broad build check:
+
+```bash
+make build PLAT=qemu-virt-riscv
+make build PLAT=qemu-an521
+```
+
+Do not run QEMU from an agent session. If runtime validation is needed, provide
+the manual shell smoke test commands for the user to run locally.

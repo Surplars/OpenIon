@@ -15,9 +15,7 @@ arch = { path = "../../arch", default-features = false }
 kernel = { path = "../../kernel" }
 ns16550a = { path = "../../drivers/ns16550a" }
 virtio_blk = { path = "../../drivers/virtio_blk" }
-riscv = "0.11.1"
 spin = "0.10.0"
-sbi-rt = { version = "0.0.3", features = ["legacy"] }
 
 [features]
 default = ["s-mode"]

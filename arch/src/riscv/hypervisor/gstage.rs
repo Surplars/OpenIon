@@ -1,6 +1,6 @@
-use kernel::mm::addr::{PhysAddr, PAGE_SHIFT, PAGE_SIZE};
-use kernel::mm::{MemPerms, MmError};
 use core::ptr;
+use kernel::mm::addr::{PAGE_SHIFT, PAGE_SIZE, PhysAddr};
+use kernel::mm::{MemPerms, MmError};
 
 const PTE_V: u64 = 1 << 0;
 const PTE_R: u64 = 1 << 1;
@@ -20,9 +20,15 @@ struct PageTable {
 
 fn perms_to_pte(perms: MemPerms) -> u64 {
     let mut bits = PTE_V | PTE_A | PTE_D;
-    if perms.contains(MemPerms::READ) { bits |= PTE_R; }
-    if perms.contains(MemPerms::WRITE) { bits |= PTE_W; }
-    if perms.contains(MemPerms::EXECUTE) { bits |= PTE_X; }
+    if perms.contains(MemPerms::READ) {
+        bits |= PTE_R;
+    }
+    if perms.contains(MemPerms::WRITE) {
+        bits |= PTE_W;
+    }
+    if perms.contains(MemPerms::EXECUTE) {
+        bits |= PTE_X;
+    }
     bits
 }
 
@@ -71,9 +77,9 @@ impl GStagePageTable {
         let addr = gpa.raw();
         // Sv39x4: VPN[2] is 11 bits (bits 40:30)
         let vpn = [
-            (addr >> 12) & 0x1FF,  // VPN[0]
-            (addr >> 21) & 0x1FF,  // VPN[1]
-            (addr >> 30) & 0x7FF,  // VPN[2] — 11 bits for Sv39x4
+            (addr >> 12) & 0x1FF, // VPN[0]
+            (addr >> 21) & 0x1FF, // VPN[1]
+            (addr >> 30) & 0x7FF, // VPN[2] — 11 bits for Sv39x4
         ];
 
         let ppn = hpa.raw() >> PAGE_SHIFT;
@@ -87,7 +93,9 @@ impl GStagePageTable {
             let idx = vpn[level];
             if (table.entries[idx] & PTE_V) == 0 {
                 let new_page = alloc().ok_or(MmError::OutOfMemory)?;
-                unsafe { ptr::write_bytes(new_page.as_mut_ptr::<u8>(), 0, PAGE_SIZE); }
+                unsafe {
+                    ptr::write_bytes(new_page.as_mut_ptr::<u8>(), 0, PAGE_SIZE);
+                }
                 let child_ppn = new_page.raw() >> PAGE_SHIFT;
                 table.entries[idx] = PTE_V | ((child_ppn as u64 & 0xFFF_FFFF_FFFF) << 10);
                 table = unsafe { &mut *(new_page.as_mut_ptr()) };

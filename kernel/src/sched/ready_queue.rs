@@ -1,7 +1,9 @@
-use super::task::{TaskControlBlock, Priority};
+use super::task::{Priority, TaskControlBlock};
 
 const MAX_TASKS: usize = 32;
-const MAX_PRIORITIES: usize = 8;
+pub const MAX_PRIORITIES: usize = 8;
+pub const MIN_PRIORITY: Priority = 0;
+pub const MAX_PRIORITY: Priority = (MAX_PRIORITIES - 1) as Priority;
 
 #[derive(Copy, Clone)]
 struct Queue {
@@ -60,12 +62,16 @@ impl ReadyQueue {
             current_priority: 0,
         }
     }
-    
+
     pub fn push(&mut self, task: &mut TaskControlBlock) -> bool {
+        if task.queued {
+            return false;
+        }
+
         if self.task_count >= MAX_TASKS {
             return false;
         }
-        
+
         let priority = task.priority as usize;
         if priority >= MAX_PRIORITIES {
             return false;
@@ -74,19 +80,22 @@ impl ReadyQueue {
         unsafe {
             self.queues[priority].push_back(task as *mut _);
         }
-        
+        task.queued = true;
+
         self.task_count += 1;
         true
     }
 
-    pub fn pop_highest(&mut self) -> Option<&mut TaskControlBlock> {    
+    pub fn pop_highest(&mut self) -> Option<&mut TaskControlBlock> {
         for priority in (0..MAX_PRIORITIES).rev() {
             let q = &mut self.queues[priority];
             if !q.head.is_null() {
                 let task_ptr = unsafe { q.pop_front() };
                 self.task_count -= 1;
                 self.current_priority = priority as Priority;
-                return Some(unsafe { &mut *task_ptr });
+                let task = unsafe { &mut *task_ptr };
+                task.queued = false;
+                return Some(task);
             }
         }
         None
@@ -100,8 +109,26 @@ impl ReadyQueue {
         }
         0
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.task_count == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.task_count
+    }
+
+    pub fn for_each(&self, mut f: impl FnMut(&TaskControlBlock)) {
+        for queue in self.queues.iter() {
+            let mut curr = queue.head;
+            while !curr.is_null() {
+                let task = unsafe { &*curr };
+                f(task);
+                curr = task.next;
+            }
+        }
+    }
 }
 
 unsafe impl Send for Queue {}
 unsafe impl Sync for Queue {}
-

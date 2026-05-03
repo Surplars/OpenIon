@@ -1,4 +1,4 @@
-use super::{Driver, DriverResult, DriverErr, GenericDeviceConfig};
+use super::{Driver, DriverErr, DriverResult, GenericDeviceConfig};
 
 /// Trait for fixed-block-size random-access storage (SD card, disk, flash).
 pub trait BlockDevice: Driver {

@@ -1,10 +1,13 @@
-﻿#![no_std]
+#![no_std]
 
 pub mod register;
 
-use kernel::driver::net::{MacAddress, NetDevice};
-use kernel::driver::{DeviceConfig, Driver, DriverErr, DriverFactory, DriverResult, GenericDeviceConfig};
 use kernel::driver::manager::AnyDriver;
+use kernel::driver::net::{MacAddress, NetDevice};
+use kernel::driver::{
+    DeviceConfig, DeviceResource, Driver, DriverFactory, DriverResult, GenericDeviceConfig,
+    StaticDriverPool,
+};
 use register::Lan9118Registers;
 
 pub struct Lan9118 {
@@ -201,34 +204,17 @@ impl NetDevice for Lan9118 {
 /// Also supports manual registration on MCU platforms without FDT.
 pub struct Lan9118Factory;
 
-use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
-
-struct EthSlot(UnsafeCell<MaybeUninit<Lan9118>>);
-unsafe impl Sync for EthSlot {}
-
 const MAX_LAN9118: usize = 2;
-static ETH_POOL: [EthSlot; MAX_LAN9118] = [
-    EthSlot(UnsafeCell::new(MaybeUninit::uninit())),
-    EthSlot(UnsafeCell::new(MaybeUninit::uninit())),
-];
-static ETH_POOL_IDX: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static ETH_POOL: StaticDriverPool<Lan9118, MAX_LAN9118> = StaticDriverPool::new();
 
 impl DriverFactory for Lan9118Factory {
     fn compatible(&self) -> &[&str] {
         &["smsc,lan9118"]
     }
 
-    fn probe(&self, base_addr: usize, irq: u32) -> Option<&'static dyn AnyDriver> {
-        let idx = ETH_POOL_IDX.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        if idx >= MAX_LAN9118 {
-            return None;
-        }
-        let slot = &ETH_POOL[idx];
-        let driver = Lan9118::new(GenericDeviceConfig::new(base_addr, irq));
-        unsafe {
-            (*slot.0.get()).write(driver);
-            Some(&*(*slot.0.get()).as_ptr())
-        }
+    fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
+        ETH_POOL
+            .alloc(Lan9118::new(GenericDeviceConfig::from_resource(resource)))
+            .map(|d| d as _)
     }
 }

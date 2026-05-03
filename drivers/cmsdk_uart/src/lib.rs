@@ -2,8 +2,11 @@
 
 use bitflags::bitflags;
 use kernel::driver::char::CharDevice;
-use kernel::driver::{GenericDeviceConfig, Driver, DriverErr, DriverFactory, DriverResult, DeviceConfig};
 use kernel::driver::manager::AnyDriver;
+use kernel::driver::{
+    DeviceConfig, DeviceResource, Driver, DriverErr, DriverFactory, DriverResult,
+    GenericDeviceConfig, StaticDriverPool,
+};
 use kernel::kinfo;
 use volatile_register::RW;
 
@@ -44,10 +47,7 @@ pub struct CmsdkUart {
 
 impl CmsdkUart {
     pub const fn new(base_addr: usize, irq_num: u32) -> Self {
-        Self {
-            base_addr,
-            irq_num,
-        }
+        Self { base_addr, irq_num }
     }
 }
 
@@ -67,9 +67,9 @@ impl Driver for CmsdkUart {
         let uart_regs = self.get_config().base_address() as *const UartRegisters;
 
         unsafe {
-            (*uart_regs).ctrl.write(
-                UartCtrl::TXEN.bits() | UartCtrl::RXEN.bits() | UartCtrl::RXIEN.bits()
-            );
+            (*uart_regs)
+                .ctrl
+                .write(UartCtrl::TXEN.bits() | UartCtrl::RXEN.bits() | UartCtrl::RXIEN.bits());
         }
 
         kinfo!("CMSDK UART initialized with RX interrupt enabled");
@@ -83,16 +83,16 @@ impl Driver for CmsdkUart {
     fn handle_irq(&self, irq_id: u32) -> bool {
         if irq_id == self.irq_num {
             let regs = self.base_addr as *const UartRegisters;
-            
+
             // Read all available bytes
             while UartStatus::from_bits_truncate(unsafe { (*regs).state.read() })
-                .contains(UartStatus::RX_BF) 
+                .contains(UartStatus::RX_BF)
             {
                 let byte = unsafe { (*regs).data.read() } as u8;
                 // Add to global rx buffer
                 kernel::driver::char::push_to_rx_buf(byte);
             }
-            
+
             unsafe {
                 let rx_mask = 1 << 1; // RX interrupt clear mask (RXIQ)
                 (*regs).intstatus.write(rx_mask);
@@ -141,36 +141,15 @@ impl CharDevice for CmsdkUart {
 /// Also supports manual registration on MCU platforms without FDT.
 pub struct CmsdkUartFactory;
 
-use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
-
-struct UartSlot(UnsafeCell<MaybeUninit<CmsdkUart>>);
-unsafe impl Sync for UartSlot {}
-
 const MAX_CMSDK_UART: usize = 4;
-static UART_POOL: [UartSlot; MAX_CMSDK_UART] = [
-    UartSlot(UnsafeCell::new(MaybeUninit::uninit())),
-    UartSlot(UnsafeCell::new(MaybeUninit::uninit())),
-    UartSlot(UnsafeCell::new(MaybeUninit::uninit())),
-    UartSlot(UnsafeCell::new(MaybeUninit::uninit())),
-];
-static UART_POOL_IDX: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static UART_POOL: StaticDriverPool<CmsdkUart, MAX_CMSDK_UART> = StaticDriverPool::new();
 
 impl DriverFactory for CmsdkUartFactory {
     fn compatible(&self) -> &[&str] {
         &["arm,cmsdk-uart"]
     }
 
-    fn probe(&self, base_addr: usize, irq: u32) -> Option<&'static dyn AnyDriver> {
-        let idx = UART_POOL_IDX.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        if idx >= MAX_CMSDK_UART {
-            return None;
-        }
-        let slot = &UART_POOL[idx];
-        let driver = CmsdkUart::new(base_addr, irq);
-        unsafe {
-            (*slot.0.get()).write(driver);
-            Some(&*(*slot.0.get()).as_ptr())
-        }
+    fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
+        UART_POOL.alloc(CmsdkUart::new(resource.base_addr, resource.irq)).map(|d| d as _)
     }
 }

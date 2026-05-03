@@ -1,18 +1,18 @@
 #[unsafe(no_mangle)]
 pub extern "C" fn nmi_handler() {
-	kernel::kerror!("NMI occurred!");
+    kernel::kerror!("NMI occurred!");
     loop {}
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn memmanage_handler() {
-	kernel::kerror!("Memory Management Fault occurred!");
+    kernel::kerror!("Memory Management Fault occurred!");
     loop {}
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn busfault_handler() {
-	kernel::kerror!("BusFault occurred!");
+    kernel::kerror!("BusFault occurred!");
     loop {}
 }
 

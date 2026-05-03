@@ -1,9 +1,10 @@
-﻿#![no_std]
+#![no_std]
 
-use kernel::sched::Scheduler;
 use kernel::kinfo;
+use kernel::sched::Scheduler;
 
-static mut SHELL_TASK_STACK: [usize; kernel::shell::BUILTIN_SHELL_STACK_SIZE / core::mem::size_of::<usize>()] =
+static mut SHELL_TASK_STACK: [usize;
+    kernel::shell::BUILTIN_SHELL_STACK_SIZE / core::mem::size_of::<usize>()] =
     [0; kernel::shell::BUILTIN_SHELL_STACK_SIZE / core::mem::size_of::<usize>()];
 
 pub fn root_task() -> ! {

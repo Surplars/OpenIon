@@ -85,10 +85,17 @@ struct QemuAn521;
 
 impl Platform for QemuAn521 {
     fn config() -> PlatformConfig {
+        unsafe extern "C" {
+            fn _ebss();
+        }
+
         PlatformConfig {
             cpu_freq_hz: 25_000_000,
             systick_hz: 1_000,
             external_irq_count: 64,
+            memory_base: 0x8000_0000,
+            memory_size: 16 * 1024 * 1024,
+            kernel_end: _ebss as *const () as usize,
         }
     }
 

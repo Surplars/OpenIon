@@ -1,13 +1,15 @@
 #![no_std]
 
 use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{fence, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering, fence};
 
-use kernel::driver::{Driver, DriverErr, DriverFactory, DriverResult, GenericDeviceConfig};
 use kernel::driver::block::BlockDevice;
 use kernel::driver::manager::AnyDriver;
+use kernel::driver::{
+    DeviceResource, Driver, DriverErr, DriverFactory, DriverResult, GenericDeviceConfig,
+    StaticDriverPool,
+};
 
 // VirtIO MMIO register offsets
 const MAGIC: usize = 0x000;
@@ -35,6 +37,11 @@ const STATUS_ACK: u32 = 1;
 const STATUS_DRIVER: u32 = 2;
 const STATUS_DRIVER_OK: u32 = 4;
 const STATUS_FEATURES_OK: u32 = 8;
+const STATUS_FAILED: u32 = 128;
+
+const DEVICE_FEATURES_SEL: usize = 0x014;
+const DRIVER_FEATURES_SEL: usize = 0x024;
+const VIRTIO_F_VERSION_1_BIT: u32 = 32;
 
 // VirtIO block device request types
 const VIRTIO_BLK_T_IN: u32 = 0;
@@ -45,6 +52,7 @@ const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
 
 const QUEUE_SIZE: usize = 16;
+const READ_SPIN_LIMIT: usize = 2_000_000;
 
 #[repr(C)]
 struct VirtqDesc {
@@ -94,6 +102,7 @@ pub struct VirtioBlk {
     request: *mut BlkRequest,
     free_head: u16,
     last_used_idx: UnsafeCell<u16>,
+    io_busy: AtomicBool,
 }
 
 // Safety: accessed only through Driver trait methods with proper synchronization
@@ -112,6 +121,7 @@ impl VirtioBlk {
             request: core::ptr::null_mut(),
             free_head: 0,
             last_used_idx: UnsafeCell::new(0),
+            io_busy: AtomicBool::new(false),
         }
     }
 
@@ -179,21 +189,30 @@ impl VirtioBlk {
         // Set up descriptor chain: [header, data, status]
         unsafe {
             // Descriptor 0: header (BlkRequest type + sector)
-            (*self.desc).addr = self.request as u64;
-            (*self.desc).len = 16; // type(4) + reserved(4) + sector(8)
-            (*self.desc).flags = VIRTQ_DESC_F_NEXT;
-            (*self.desc).next = 1;
+            core::ptr::write_volatile(&mut (*self.desc).addr, self.request as u64);
+            core::ptr::write_volatile(&mut (*self.desc).len, 16); // type(4) + reserved(4) + sector(8)
+            core::ptr::write_volatile(&mut (*self.desc).flags, VIRTQ_DESC_F_NEXT);
+            core::ptr::write_volatile(&mut (*self.desc).next, 1);
 
             // Descriptor 1: data (512 bytes) — device-writable
-            (*self.desc.add(1)).addr = (self.request as usize + 16) as u64;
-            (*self.desc.add(1)).len = 512;
-            (*self.desc.add(1)).flags = VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE;
-            (*self.desc.add(1)).next = 2;
+            core::ptr::write_volatile(
+                &mut (*self.desc.add(1)).addr,
+                (self.request as usize + 16) as u64,
+            );
+            core::ptr::write_volatile(&mut (*self.desc.add(1)).len, 512);
+            core::ptr::write_volatile(
+                &mut (*self.desc.add(1)).flags,
+                VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            );
+            core::ptr::write_volatile(&mut (*self.desc.add(1)).next, 2);
 
             // Descriptor 2: status (1 byte)
-            (*self.desc.add(2)).addr = (self.request as usize + 16 + 512) as u64;
-            (*self.desc.add(2)).len = 1;
-            (*self.desc.add(2)).flags = VIRTQ_DESC_F_WRITE;
+            core::ptr::write_volatile(
+                &mut (*self.desc.add(2)).addr,
+                (self.request as usize + 16 + 512) as u64,
+            );
+            core::ptr::write_volatile(&mut (*self.desc.add(2)).len, 1);
+            core::ptr::write_volatile(&mut (*self.desc.add(2)).flags, VIRTQ_DESC_F_WRITE);
 
             self.free_head = 0;
             *self.last_used_idx.get() = 0;
@@ -202,26 +221,66 @@ impl VirtioBlk {
         true
     }
 
+    fn set_status_bits(&self, bits: u32) {
+        let status = self.reg_read32(STATUS);
+        self.reg_write32(STATUS, status | bits);
+    }
+
+    fn negotiate_features(&self, version: u32) -> bool {
+        self.reg_write32(DEVICE_FEATURES_SEL, 1);
+        let device_features_hi = self.reg_read32(DEVICE_FEATURES);
+        self.reg_write32(DEVICE_FEATURES_SEL, 0);
+        let _device_features_lo = self.reg_read32(DEVICE_FEATURES);
+
+        self.reg_write32(DRIVER_FEATURES_SEL, 0);
+        self.reg_write32(DRIVER_FEATURES, 0);
+        self.reg_write32(DRIVER_FEATURES_SEL, 1);
+
+        let mut driver_features_hi = 0;
+        if version == 2 {
+            let version_1_mask = 1u32 << (VIRTIO_F_VERSION_1_BIT - 32);
+            if device_features_hi & version_1_mask == 0 {
+                return false;
+            }
+            driver_features_hi |= version_1_mask;
+        }
+        self.reg_write32(DRIVER_FEATURES, driver_features_hi);
+
+        self.set_status_bits(STATUS_FEATURES_OK);
+        self.reg_read32(STATUS) & STATUS_FEATURES_OK != 0
+    }
+
     fn read_capacity(&mut self) {
         // The capacity is at offset 0 in the config space (0x100)
         self.capacity = self.reg_read64(0x100);
     }
 
     pub fn read_sector(&self, sector: u64, buf: &mut [u8; 512]) -> bool {
+        if self.io_busy.swap(true, Ordering::Acquire) {
+            return false;
+        }
+
+        let result = self.read_sector_locked(sector, buf);
+        self.io_busy.store(false, Ordering::Release);
+        result
+    }
+
+    fn read_sector_locked(&self, sector: u64, buf: &mut [u8; 512]) -> bool {
         unsafe {
-            (*self.request).type_ = VIRTIO_BLK_T_IN;
-            (*self.request).reserved = 0;
-            (*self.request).sector = sector;
-            (*self.request).status = 0xFF;
+            core::ptr::write_volatile(&mut (*self.request).type_, VIRTIO_BLK_T_IN);
+            core::ptr::write_volatile(&mut (*self.request).reserved, 0);
+            core::ptr::write_volatile(&mut (*self.request).sector, sector);
+            core::ptr::write_volatile(&mut (*self.request).status, 0xFF);
         }
 
         // Put descriptor 0 in available ring
         unsafe {
             let avail = &mut *self.avail;
-            let idx = avail.idx as usize % QUEUE_SIZE;
-            avail.ring[idx] = 0;
+            let avail_idx = core::ptr::read_volatile(&avail.idx);
+            let idx = avail_idx as usize % QUEUE_SIZE;
+            core::ptr::write_volatile(&mut avail.ring[idx], 0);
             fence(Ordering::Release);
-            avail.idx = avail.idx.wrapping_add(1);
+            core::ptr::write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
         }
 
         // Notify device
@@ -229,17 +288,31 @@ impl VirtioBlk {
 
         // Wait for used ring
         let last = unsafe { *self.last_used_idx.get() };
-        loop {
+        let mut spins = 0usize;
+        while spins < READ_SPIN_LIMIT {
             fence(Ordering::Acquire);
-            let used_idx = unsafe { (*self.used).idx };
+            let used_idx = unsafe { core::ptr::read_volatile(&(*self.used).idx) };
             if used_idx != last {
-                unsafe { *self.last_used_idx.get() = used_idx; }
+                unsafe {
+                    *self.last_used_idx.get() = used_idx;
+                }
                 break;
             }
+            spins += 1;
+            core::hint::spin_loop();
+        }
+
+        if spins >= READ_SPIN_LIMIT {
+            return false;
+        }
+
+        let irq_status = self.reg_read32(INTERRUPT_STATUS);
+        if irq_status != 0 {
+            self.reg_write32(INTERRUPT_ACK, irq_status);
         }
 
         unsafe {
-            let status = (*self.request).status;
+            let status = core::ptr::read_volatile(&(*self.request).status);
             if status == 0 {
                 buf.copy_from_slice(&(*self.request).data);
                 true
@@ -285,7 +358,12 @@ impl Driver for VirtioBlk {
     fn as_block_device(&self) -> Option<&'static kernel::driver::block::DynBlockDevice> {
         // Safety: VirtioBlk instances live in a static BLK_POOL, so self is 'static
         let fat: &kernel::driver::block::DynBlockDevice = self;
-        Some(unsafe { core::mem::transmute::<&kernel::driver::block::DynBlockDevice, &'static kernel::driver::block::DynBlockDevice>(fat) })
+        Some(unsafe {
+            core::mem::transmute::<
+                &kernel::driver::block::DynBlockDevice,
+                &'static kernel::driver::block::DynBlockDevice,
+            >(fat)
+        })
     }
 }
 
@@ -329,13 +407,16 @@ impl VirtioBlk {
 
         // Reset
         self.reg_write32(STATUS, 0);
+        fence(Ordering::SeqCst);
         // Acknowledge
-        self.reg_write32(STATUS, STATUS_ACK);
+        self.set_status_bits(STATUS_ACK);
         // Driver
-        self.reg_write32(STATUS, STATUS_ACK | STATUS_DRIVER);
-        // Features (no special features needed)
-        self.reg_write32(DRIVER_FEATURES, 0);
-        self.reg_write32(STATUS, STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES_OK);
+        self.set_status_bits(STATUS_DRIVER);
+        // Features
+        if !self.negotiate_features(ver) {
+            self.set_status_bits(STATUS_FAILED);
+            return Err(DriverErr::InvalidConfig);
+        }
 
         // Setup queue
         if !self.setup_queue() {
@@ -343,11 +424,12 @@ impl VirtioBlk {
         }
 
         // Driver OK
-        self.reg_write32(STATUS, STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK);
+        self.set_status_bits(STATUS_DRIVER_OK);
 
         self.read_capacity();
 
-        kernel::kinfo!("VirtIO Blk: {} sectors ({} MB)",
+        kernel::kinfo!(
+            "VirtIO Blk: {} sectors ({} MB)",
             self.capacity,
             self.capacity * 512 / 1024 / 1024
         );
@@ -360,38 +442,25 @@ impl VirtioBlk {
 /// Matches compatible = "virtio,mmio" and probes for block device (device_id=2).
 pub struct VirtioBlkFactory;
 
-struct BlkSlot(UnsafeCell<MaybeUninit<VirtioBlk>>);
-unsafe impl Sync for BlkSlot {}
-
-static BLK_POOL: [BlkSlot; 1] = [BlkSlot(UnsafeCell::new(MaybeUninit::uninit()))];
-static BLK_IDX: AtomicUsize = AtomicUsize::new(0);
+static BLK_POOL: StaticDriverPool<VirtioBlk, 1> = StaticDriverPool::new();
 
 impl DriverFactory for VirtioBlkFactory {
     fn compatible(&self) -> &[&str] {
         &["virtio,mmio"]
     }
 
-    fn probe(&self, base_addr: usize, irq: u32) -> Option<&'static dyn AnyDriver> {
+    fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
         // Read device_id to check if this is a block device
-        let device_id = unsafe { read_volatile((base_addr + 0x08) as *const u32) };
+        let device_id = unsafe { read_volatile((resource.base_addr + 0x08) as *const u32) };
         if device_id != 2 {
             return None; // Not a block device
         }
 
-        let idx = BLK_IDX.fetch_add(1, Ordering::Relaxed);
-        if idx >= 1 {
-            return None;
-        }
-        let slot = &BLK_POOL[idx];
-        let driver = VirtioBlk::new(base_addr, irq);
-        unsafe {
-            (*slot.0.get()).write(driver);
-            let driver_ref = &mut *(*slot.0.get()).as_mut_ptr();
-            if driver_ref.init_hw().is_ok() {
-                Some(driver_ref)
-            } else {
-                None
-            }
+        let driver = BLK_POOL.alloc(VirtioBlk::new(resource.base_addr, resource.irq))?;
+        if driver.init_hw().is_ok() {
+            Some(driver as _)
+        } else {
+            None
         }
     }
 }

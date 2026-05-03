@@ -1,6 +1,6 @@
-﻿use crate::platform::Platform;
+use crate::platform::Platform;
 use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
-use smoltcp::socket::dhcpv4::{Socket as DhcpSocket, Event as DhcpEvent};
+use smoltcp::socket::dhcpv4::{Event as DhcpEvent, Socket as DhcpSocket};
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr};
 // use smoltcp::time::Instant;
 use spin::Mutex;
@@ -10,8 +10,8 @@ pub mod socket;
 
 pub use socket::SmoltcpProvider;
 
-use device::SmoltcpDevice;
 use crate::driver::net::DynNetDevice;
+use device::SmoltcpDevice;
 
 pub static GLOBAL_NET_PROVIDER: SmoltcpProvider = SmoltcpProvider;
 
@@ -32,11 +32,16 @@ pub fn init<P: Platform>() {
         let mut config = Config::new(hw_addr);
         config.random_seed = 0x12345678;
 
-        let iface = Interface::new(config, &mut SmoltcpDevice::new(dev), smoltcp::time::Instant::from_micros(crate::timer::time_us() as i64));
+        let iface = Interface::new(
+            config,
+            &mut SmoltcpDevice::new(dev),
+            smoltcp::time::Instant::from_micros(crate::timer::time_us() as i64),
+        );
 
         // Initialize sockets
         unsafe {
-            let mut socket_set = SocketSet::new(&mut (&mut *core::ptr::addr_of_mut!(SOCKETS_STORAGE))[..]);
+            let mut socket_set =
+                SocketSet::new(&mut (&mut *core::ptr::addr_of_mut!(SOCKETS_STORAGE))[..]);
             let dhcp_socket = DhcpSocket::new();
             DHCP_HANDLE = Some(socket_set.add(dhcp_socket));
             *NETWORK_SOCKETS.lock() = Some(socket_set);
@@ -54,7 +59,11 @@ pub fn poll() {
     let mut dev_lock = RX_TX_DEVICE.lock();
     let mut sockets_lock = NETWORK_SOCKETS.lock();
 
-    if let (Some(iface), Some(dev), Some(sockets)) = (iface_lock.as_mut(), dev_lock.as_mut(), sockets_lock.as_mut()) {
+    if let (Some(iface), Some(dev), Some(sockets)) = (
+        iface_lock.as_mut(),
+        dev_lock.as_mut(),
+        sockets_lock.as_mut(),
+    ) {
         let timestamp = smoltcp::time::Instant::from_micros(crate::timer::time_us() as i64);
         let mut sdev = SmoltcpDevice::new(*dev);
 
