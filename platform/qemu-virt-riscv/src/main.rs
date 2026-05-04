@@ -13,10 +13,10 @@ use virtio_blk::VirtioBlkFactory;
 
 pub struct QemuVirtRiscv;
 
-const UART0_BASE: usize = 0x1000_0000;
-const UART0_IRQ: u32 = 10;
-const VIRTIO_BLK0_IRQ: u32 = 1;
-const DEFAULT_DTB_ADDR: usize = 0x8006_8000;
+const UART0_BASE: usize = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_UART0_BASE;
+const UART0_IRQ: u32 = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_UART0_IRQ;
+const VIRTIO_BLK0_IRQ: u32 = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_VIRTIO_BLK_IRQ;
+const DEFAULT_DTB_ADDR: usize = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_DTB_ADDR;
 
 static UART_DRIVER: Ns16550a = Ns16550a::new(UART0_BASE, UART0_IRQ);
 
@@ -34,8 +34,7 @@ impl RiscvCpuId {
     }
 
     fn set(&self, id: u32) {
-        self.hartid
-            .store(id, core::sync::atomic::Ordering::Relaxed);
+        self.hartid.store(id, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -121,11 +120,11 @@ impl Platform for QemuVirtRiscv {
         }
 
         PlatformConfig {
-            cpu_freq_hz: 10_000_000,
-            systick_hz: 1000,
-            external_irq_count: 64,
-            memory_base: 0x8000_0000,
-            memory_size: 128 * 1024 * 1024,
+            cpu_freq_hz: kernel::generated_config::OPENION_QEMU_VIRT_RISCV_CPU_HZ,
+            systick_hz: kernel::generated_config::OPENION_SYSTICK_HZ,
+            external_irq_count: kernel::generated_config::OPENION_EXTERNAL_IRQ_COUNT,
+            memory_base: kernel::generated_config::OPENION_QEMU_VIRT_RISCV_MEMORY_BASE,
+            memory_size: kernel::generated_config::OPENION_QEMU_VIRT_RISCV_MEMORY_SIZE,
             kernel_end: ekernel as *const () as usize,
         }
     }

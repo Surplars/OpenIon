@@ -150,6 +150,8 @@ impl DriverFactory for CmsdkUartFactory {
     }
 
     fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
-        UART_POOL.alloc(CmsdkUart::new(resource.base_addr, resource.irq)).map(|d| d as _)
+        UART_POOL
+            .alloc(CmsdkUart::new(resource.base_addr, resource.irq))
+            .map(|d| d as _)
     }
 }

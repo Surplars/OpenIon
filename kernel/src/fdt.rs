@@ -78,9 +78,7 @@ unsafe fn do_parse(dtb_addr: usize, mut callback: impl FnMut(&str, &str, &[u8], 
                 }
                 node_name = if len > 0 {
                     unsafe {
-                        core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                            name_start, len,
-                        ))
+                        core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_start, len))
                     }
                 } else {
                     ""
@@ -109,16 +107,16 @@ unsafe fn do_parse(dtb_addr: usize, mut callback: impl FnMut(&str, &str, &[u8], 
 
                 let prop_name = unsafe {
                     core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                    strings_base.add(nameoff),
-                    // Find length of string
-                    {
-                        let mut l = 0;
-                        while *strings_base.add(nameoff + l) != 0 {
-                            l += 1;
-                        }
-                        l
-                    },
-                ))
+                        strings_base.add(nameoff),
+                        // Find length of string
+                        {
+                            let mut l = 0;
+                            while *strings_base.add(nameoff + l) != 0 {
+                                l += 1;
+                            }
+                            l
+                        },
+                    ))
                 };
 
                 let data_ptr = pos;

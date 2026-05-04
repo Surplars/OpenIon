@@ -10,8 +10,12 @@ bench = false
 
 
 [dependencies]
-kernel = { path = "../../kernel" }
-arch = { path = "../../arch" }
-app = { path = "../../app" }
+kernel = { path = "../../kernel", default-features = false }
+arch = { path = "../../arch", default-features = false }
+app = { path = "../../app", default-features = false }
 cmsdk_uart = { path = "../../drivers/cmsdk_uart" }
 lan9118 ={ path = "../../drivers/lan9118" }
+
+[features]
+default = ["builtin_shell"]
+builtin_shell = ["app/builtin_shell"]

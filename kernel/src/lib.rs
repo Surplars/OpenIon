@@ -4,6 +4,7 @@ pub mod arch;
 pub mod driver;
 pub mod fdt;
 pub mod fs;
+pub mod generated_config;
 pub mod irq;
 pub mod log;
 pub mod mm;
@@ -11,6 +12,7 @@ pub mod net;
 pub mod platform;
 pub mod process;
 pub mod sched;
+#[cfg(feature = "builtin_shell")]
 pub mod shell;
 pub mod sync;
 pub mod timer;
@@ -32,10 +34,12 @@ pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
     core_init();
     kinfo!("kernel core init done");
 
-    // FDT auto-probing: discover and init drivers from device tree
-    let fdt_count = driver::manager::DriverManager::auto_probe_fdt();
-    if fdt_count > 0 {
-        kinfo!("FDT auto-probed {} driver(s)", fdt_count);
+    if generated_config::OPENION_FDT_AUTO_PROBE {
+        // FDT auto-probing: discover and init drivers from device tree.
+        let fdt_count = driver::manager::DriverManager::auto_probe_fdt();
+        if fdt_count > 0 {
+            kinfo!("FDT auto-probed {} driver(s)", fdt_count);
+        }
     }
 
     auto_drivers_init::<P>();

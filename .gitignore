@@ -1,2 +1,4 @@
 /target
 sd.img
+.config.toml
+.config.old.toml

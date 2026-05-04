@@ -10,6 +10,7 @@ members = [
 	"kernel",
 	"platform/qemu-an521",
 	"platform/qemu-virt-riscv",
+	"xtask",
 ]
 
 default-members = ["app", "arch", "kernel"]

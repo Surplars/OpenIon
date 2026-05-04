@@ -9,7 +9,7 @@ test = false
 bench = false
 
 [dependencies]
-kernel = { path = "../kernel" }
+kernel = { path = "../kernel", default-features = false }
 spin = "0.10.0"
 
 [features]

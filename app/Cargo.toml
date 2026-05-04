@@ -8,5 +8,9 @@ test = false
 bench = false
 
 [dependencies]
-kernel = { path = "../kernel" }
-arch = { path = "../arch" }
+kernel = { path = "../kernel", default-features = false }
+arch = { path = "../arch", default-features = false }
+
+[features]
+default = ["builtin_shell"]
+builtin_shell = ["kernel/builtin_shell"]

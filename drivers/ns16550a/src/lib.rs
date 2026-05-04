@@ -131,6 +131,8 @@ impl DriverFactory for Ns16550aFactory {
     }
 
     fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
-        DRIVER_POOL.alloc(Ns16550a::new(resource.base_addr, resource.irq)).map(|d| d as _)
+        DRIVER_POOL
+            .alloc(Ns16550a::new(resource.base_addr, resource.irq))
+            .map(|d| d as _)
     }
 }

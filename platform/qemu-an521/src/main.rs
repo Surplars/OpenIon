@@ -14,9 +14,11 @@ global_asm!(include_str!("../startup.s"));
 
 static UART_CONSOLE: UartConsole = UartConsole;
 
-static UART: CmsdkUart = CmsdkUart::new(UART_DATA, 0);
-static LAN9118_ETH: Lan9118 =
-    Lan9118::new(kernel::driver::GenericDeviceConfig::new(0x42000000, 48));
+static UART: CmsdkUart = CmsdkUart::new(UART_DATA, UART_IRQ);
+static LAN9118_ETH: Lan9118 = Lan9118::new(kernel::driver::GenericDeviceConfig::new(
+    LAN9118_BASE,
+    LAN9118_IRQ,
+));
 
 static PLATFORM_DRIVERS: [&'static dyn AnyDriver; 2] = [&UART, &LAN9118_ETH];
 
@@ -29,12 +31,12 @@ pub extern "C" fn platform_init() -> ! {
 #[unsafe(no_mangle)]
 
 pub extern "C" fn uart0_rx_handler() {
-    kernel::irq::handle_irq(0);
+    kernel::irq::handle_irq(UART_IRQ as usize);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn eth_handler() {
-    kernel::irq::handle_irq(48);
+    kernel::irq::handle_irq(LAN9118_IRQ as usize);
 }
 
 struct UartConsole;
@@ -47,7 +49,10 @@ impl kernel::log::PlatformConsole for UartConsole {
     }
 }
 
-const UART_DATA: usize = 0x40200000;
+const UART_DATA: usize = kernel::generated_config::OPENION_QEMU_AN521_UART_BASE;
+const UART_IRQ: u32 = kernel::generated_config::OPENION_QEMU_AN521_UART_IRQ;
+const LAN9118_BASE: usize = kernel::generated_config::OPENION_QEMU_AN521_LAN9118_BASE;
+const LAN9118_IRQ: u32 = kernel::generated_config::OPENION_QEMU_AN521_LAN9118_IRQ;
 
 const UART_STATE: usize = 0x40200004;
 
@@ -90,11 +95,11 @@ impl Platform for QemuAn521 {
         }
 
         PlatformConfig {
-            cpu_freq_hz: 25_000_000,
-            systick_hz: 1_000,
-            external_irq_count: 64,
-            memory_base: 0x8000_0000,
-            memory_size: 16 * 1024 * 1024,
+            cpu_freq_hz: kernel::generated_config::OPENION_QEMU_AN521_CPU_HZ,
+            systick_hz: kernel::generated_config::OPENION_SYSTICK_HZ,
+            external_irq_count: kernel::generated_config::OPENION_EXTERNAL_IRQ_COUNT,
+            memory_base: kernel::generated_config::OPENION_QEMU_AN521_MEMORY_BASE,
+            memory_size: kernel::generated_config::OPENION_QEMU_AN521_MEMORY_SIZE,
             kernel_end: _ebss as *const () as usize,
         }
     }
@@ -104,7 +109,7 @@ impl Platform for QemuAn521 {
 
         uart_init();
         kernel::log::set_console(&UART_CONSOLE);
-        arch::arm::cortex_m::nvic::enable_irq(0); // Enable UART0 RX IRQ in NVIC
+        arch::arm::cortex_m::nvic::enable_irq(UART_IRQ as u16);
         let config = Self::config();
 
         arch::arm::cortex_m::systick::init(config.cpu_freq_hz, config.systick_hz);

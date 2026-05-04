@@ -12,6 +12,8 @@ memory management, and clean module boundaries.
 ## Build And Run
 
 ```bash
+make config
+make menuconfig
 make build PLAT=qemu-virt-riscv
 make build PLAT=qemu-an521
 make run   PLAT=qemu-virt-riscv
@@ -20,6 +22,9 @@ make run   PLAT=qemu-an521
 
 - Never use `make run` in agent sessions. QEMU blocks the terminal and may not
   be interruptible from the tool session. Use `make build` only.
+- `make` delegates to `xtask`, and `xtask` is launched with `HOST_TARGET`
+  because `.cargo/config.toml` defaults to a bare-metal target. The default is
+  `x86_64-pc-windows-msvc`; override `HOST_TARGET=...` on other hosts.
 - The root `Cargo.toml` default members are `["app", "arch", "kernel"]`.
   Platform crates must be built explicitly with `make build PLAT=...` or
   `cargo build -p <platform-crate> --target <target>`.
@@ -42,6 +47,32 @@ make run   PLAT=qemu-an521
 | `lan9118` | `drivers/lan9118/` | LAN9118 Ethernet driver |
 | `virtio_blk` | `drivers/virtio_blk/` | VirtIO MMIO block driver |
 | `bootloader` | `bootloader/` | Placeholder |
+| `xtask` | `xtask/` | Host-side config/build orchestration |
+
+## Configuration
+
+OpenIon uses Ionix for checked-in kernel and platform configuration.
+
+| Path | Role |
+|---|---|
+| `utils/ionix/` | Rust configuration tool with CLI and API entry points |
+| `config/openion.schema.toml` | Typed schema for OpenIon config |
+| `.config.toml` | Active generated/edited config created from schema defaults |
+| `.config.old.toml` | Backup written before `.config.toml` changes |
+| `kernel/src/generated_config.rs` | Generated `no_std` Rust constants |
+| `xtask/` | Generates config and maps config values to Cargo build arguments |
+
+- Run `make config` or
+  `cargo run -p xtask --release --target <host> -- --host-target <host> config`
+  after changing schema/config files. Run `make menuconfig` for the interactive
+  Ionix UI.
+- Build through `make build PLAT=...` when possible. It regenerates config and
+  keeps target triples, platform packages, RISC-V mode features, network
+  backend features, and the built-in shell feature in sync.
+- Do not hand-edit `kernel/src/generated_config.rs`; edit
+  `config/openion.schema.toml` or `.config.toml` and regenerate.
+- Keep generated constants `no_std` compatible. Do not make core kernel,
+  shell, VFS, or driver-registry paths depend on host-only Ionix code.
 
 ## Module Boundaries
 

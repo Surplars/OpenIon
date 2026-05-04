@@ -1,7 +1,7 @@
 use crate::QemuVirtRiscv;
 use kernel::platform::Platform;
 
-const CLINT_BASE: usize = 0x0200_0000;
+const CLINT_BASE: usize = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_CLINT_BASE;
 const CLINT_MTIME: usize = CLINT_BASE + 0xBFF8;
 
 #[cfg(feature = "m-mode")]

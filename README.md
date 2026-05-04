@@ -26,13 +26,40 @@ memory management, and platform/architecture separation.
 ## Build
 
 ```bash
+make config
+make menuconfig
 make build PLAT=qemu-virt-riscv
 make build PLAT=qemu-an521
 ```
 
+The Makefile delegates to `xtask`, which first generates
+`kernel/src/generated_config.rs` from the Ionix schema and config files:
+
+| Path | Role |
+|---|---|
+| `config/openion.schema.toml` | Typed kernel/platform configuration schema |
+| `.config.toml` | Active generated/edited configuration created from schema defaults |
+| `.config.old.toml` | Backup written before `.config.toml` changes |
+| `kernel/src/generated_config.rs` | Generated `no_std` Rust constants used by the kernel and platforms |
+| `utils/ionix/` | Configuration tool, usable from CLI or Rust API |
+| `xtask/` | Host build/config orchestration |
+
+The root `.cargo/config.toml` defaults to a bare-metal target, so `xtask` is
+always launched with the host target through `HOST_TARGET`. Override it if your
+host differs:
+
+```bash
+make build PLAT=qemu-virt-riscv HOST_TARGET=x86_64-unknown-linux-gnu
+```
+
 The root workspace `default-members` are only `app`, `arch`, and `kernel`.
-Platform binaries must be built explicitly with `make build PLAT=...` or
-`cargo build -p <platform-crate> --target <target>`.
+Platform binaries should be built through `make build PLAT=...` so Ionix config
+generation, Cargo features, and target triples stay in sync.
+
+`make config` creates or refreshes `.config.toml` and regenerates
+`kernel/src/generated_config.rs`. `make menuconfig` opens the Ionix TUI for the
+same schema/config pair and writes `.config.old.toml` before replacing an
+existing config.
 
 ## Run In QEMU
 
@@ -85,6 +112,9 @@ directories.
 - Cooperative scheduler with priority-aware ready queues and high-priority
   preemption points.
 - Interactive shell using an IRQ producer and shell consumer UART RX path.
+- Ionix-generated configuration for platform constants, scheduler tick rate,
+  IRQ table size, FDT auto-probing, built-in shell selection, RISC-V mode, and
+  network backend feature selection.
 - RAMFS-based VFS with stable `NodeId` handles.
 - Mount table snapshots to avoid printing or block I/O while holding locks.
 - Read-only exFAT mounting over VirtIO block on `qemu-virt-riscv`.
@@ -113,7 +143,7 @@ registry lock.
 
 `qemu-virt-riscv` defaults to `s-mode`. The platform receives `hartid` and
 `dtb_pa` from firmware; if no DTB address is provided, it falls back to the
-legacy QEMU address used by this tree.
+DTB address configured in `.config.toml`.
 
 RISC-V CSR access, SBI calls, trap setup, and timer interrupt enables live under
 `arch/src/riscv`. QEMU virt MMIO details such as PLIC and CLINT addresses remain

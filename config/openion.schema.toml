@@ -1,0 +1,225 @@
+# OpenIon kernel configuration schema for Ionix.
+
+[[menus]]
+name = "Build Target"
+key = "BUILD"
+help = "Host build and Cargo target selection."
+visible = true
+
+[[menus.items]]
+name = "Platform"
+key = "OPENION_PLATFORM"
+type = "string"
+default = "qemu-virt-riscv"
+help = "Platform crate to build. Supported: qemu-virt-riscv, qemu-an521."
+rebuild = true
+
+[[menus.items]]
+name = "Cargo Target Triple"
+key = "OPENION_TARGET"
+type = "string"
+default = "riscv64imac-unknown-none-elf"
+help = "Rust target triple passed to cargo."
+rebuild = true
+
+[[menus.items]]
+name = "RISC-V S-mode"
+key = "OPENION_RISCV_S_MODE"
+type = "bool"
+default = true
+help = "Build the RISC-V platform in Supervisor mode on SBI firmware."
+rebuild = true
+
+[[menus.items]]
+name = "RISC-V M-mode"
+key = "OPENION_RISCV_M_MODE"
+type = "bool"
+default = false
+help = "Build the RISC-V platform in Machine mode. Experimental for this tree."
+rebuild = true
+
+[[menus.items]]
+name = "Network Backend"
+key = "OPENION_NET_BACKEND"
+type = "string"
+default = "ionnet"
+help = "Kernel network backend. Supported: ionnet, smoltcp."
+rebuild = true
+
+[[menus]]
+name = "Kernel Core"
+key = "KERNEL"
+help = "Platform-neutral kernel core parameters."
+visible = true
+
+[[menus.items]]
+name = "Scheduler Tick Rate"
+key = "OPENION_SYSTICK_HZ"
+type = "u32"
+default = 1000
+help = "Kernel tick frequency in Hz."
+rebuild = true
+
+[[menus.items]]
+name = "External IRQ Count"
+key = "OPENION_EXTERNAL_IRQ_COUNT"
+type = "usize"
+default = 64
+help = "Size of the generic IRQ handler table."
+rebuild = true
+
+[[menus.items]]
+name = "Enable Built-in Shell"
+key = "OPENION_BUILTIN_SHELL"
+type = "bool"
+default = true
+help = "Enable the built-in interactive shell."
+rebuild = true
+
+[[menus.items]]
+name = "Enable FDT Auto Probe"
+key = "OPENION_FDT_AUTO_PROBE"
+type = "bool"
+default = true
+help = "Scan FDT and instantiate matching driver factories during boot."
+rebuild = true
+
+[[menus]]
+name = "RISC-V QEMU virt"
+key = "QEMU_VIRT_RISCV"
+help = "QEMU virt board constants."
+visible = true
+
+[[menus.items]]
+name = "CPU Frequency"
+key = "OPENION_QEMU_VIRT_RISCV_CPU_HZ"
+type = "u32"
+default = 10000000
+help = "RISC-V QEMU virt timer frequency in Hz."
+rebuild = true
+
+[[menus.items]]
+name = "Memory Base"
+key = "OPENION_QEMU_VIRT_RISCV_MEMORY_BASE"
+type = "usize"
+default = "0x8000_0000"
+help = "RISC-V QEMU virt RAM base."
+rebuild = true
+
+[[menus.items]]
+name = "Memory Size"
+key = "OPENION_QEMU_VIRT_RISCV_MEMORY_SIZE"
+type = "usize"
+default = 134217728
+help = "RISC-V QEMU virt RAM size in bytes."
+rebuild = true
+
+[[menus.items]]
+name = "Default DTB Address"
+key = "OPENION_QEMU_VIRT_RISCV_DTB_ADDR"
+type = "usize"
+default = "0x8006_8000"
+help = "Fallback DTB physical address if firmware does not pass one."
+rebuild = true
+
+[[menus.items]]
+name = "UART0 Base"
+key = "OPENION_QEMU_VIRT_RISCV_UART0_BASE"
+type = "usize"
+default = "0x1000_0000"
+help = "NS16550A UART0 MMIO base."
+rebuild = true
+
+[[menus.items]]
+name = "UART0 IRQ"
+key = "OPENION_QEMU_VIRT_RISCV_UART0_IRQ"
+type = "u32"
+default = 10
+help = "NS16550A UART0 PLIC IRQ."
+rebuild = true
+
+[[menus.items]]
+name = "VirtIO Block IRQ"
+key = "OPENION_QEMU_VIRT_RISCV_VIRTIO_BLK_IRQ"
+type = "u32"
+default = 1
+help = "VirtIO block PLIC IRQ for the default QEMU device."
+rebuild = true
+
+[[menus.items]]
+name = "PLIC Base"
+key = "OPENION_QEMU_VIRT_RISCV_PLIC_BASE"
+type = "usize"
+default = "0x0c00_0000"
+help = "QEMU virt PLIC MMIO base."
+rebuild = true
+
+[[menus.items]]
+name = "CLINT Base"
+key = "OPENION_QEMU_VIRT_RISCV_CLINT_BASE"
+type = "usize"
+default = "0x0200_0000"
+help = "QEMU virt CLINT MMIO base."
+rebuild = true
+
+[[menus]]
+name = "ARM QEMU AN521"
+key = "QEMU_AN521"
+help = "QEMU AN521 board constants."
+visible = true
+
+[[menus.items]]
+name = "CPU Frequency"
+key = "OPENION_QEMU_AN521_CPU_HZ"
+type = "u32"
+default = 25000000
+help = "AN521 CPU clock in Hz."
+rebuild = true
+
+[[menus.items]]
+name = "Memory Base"
+key = "OPENION_QEMU_AN521_MEMORY_BASE"
+type = "usize"
+default = "0x8000_0000"
+help = "AN521 RAM base."
+rebuild = true
+
+[[menus.items]]
+name = "Memory Size"
+key = "OPENION_QEMU_AN521_MEMORY_SIZE"
+type = "usize"
+default = 16777216
+help = "AN521 RAM size in bytes."
+rebuild = true
+
+[[menus.items]]
+name = "UART Base"
+key = "OPENION_QEMU_AN521_UART_BASE"
+type = "usize"
+default = "0x4020_0000"
+help = "CMSDK UART MMIO base."
+rebuild = true
+
+[[menus.items]]
+name = "UART IRQ"
+key = "OPENION_QEMU_AN521_UART_IRQ"
+type = "u32"
+default = 0
+help = "CMSDK UART IRQ number."
+rebuild = true
+
+[[menus.items]]
+name = "LAN9118 Base"
+key = "OPENION_QEMU_AN521_LAN9118_BASE"
+type = "usize"
+default = "0x4200_0000"
+help = "LAN9118 MMIO base."
+rebuild = true
+
+[[menus.items]]
+name = "LAN9118 IRQ"
+key = "OPENION_QEMU_AN521_LAN9118_IRQ"
+type = "u32"
+default = 48
+help = "LAN9118 IRQ number."
+rebuild = true

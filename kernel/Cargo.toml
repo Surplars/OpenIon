@@ -9,7 +9,8 @@ test = false
 bench = false
 
 [features]
-default = ["use_ionnet"]
+default = []
+builtin_shell = []
 use_smoltcp = ["dep:smoltcp"]
 use_ionnet = []
 

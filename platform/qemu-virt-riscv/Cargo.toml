@@ -10,14 +10,15 @@ test = false
 bench = false
 
 [dependencies]
-app = { path = "../../app" }
+app = { path = "../../app", default-features = false }
 arch = { path = "../../arch", default-features = false }
-kernel = { path = "../../kernel" }
+kernel = { path = "../../kernel", default-features = false }
 ns16550a = { path = "../../drivers/ns16550a" }
 virtio_blk = { path = "../../drivers/virtio_blk" }
 spin = "0.10.0"
 
 [features]
-default = ["s-mode"]
-m-mode = ["arch/m-mode"]  # 微控制器模式 (纯硬件 M-mode)
-s-mode = ["arch/s-mode"]  # 操作系统/虚拟化模式 (依赖 OpenSBI 运行在 S/HS-mode)
+default = ["s-mode", "builtin_shell"]
+builtin_shell = ["app/builtin_shell"]
+m-mode = ["arch/m-mode"]
+s-mode = ["arch/s-mode"]
