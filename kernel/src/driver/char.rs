@@ -7,7 +7,7 @@ use core::pin::Pin;
 use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "async_rt")]
 use core::task::{Context, Poll};
-use spin::Once;
+use spin::Mutex;
 
 /// Byte-oriented character device, such as UART, USB CDC, or a virtual console.
 pub trait CharDevice: Driver {
@@ -93,12 +93,12 @@ impl RxBuffer {
 }
 
 static UART_RX_BUF: RxBuffer = RxBuffer::new();
-static RX_POLL_FN: Once<fn() -> Option<u8>> = Once::new();
+static RX_POLL_FN: Mutex<Option<fn() -> Option<u8>>> = Mutex::new(None);
 #[cfg(feature = "async_rt")]
 static RX_EVENT: crate::sched::async_rt::AsyncEvent = crate::sched::async_rt::AsyncEvent::new();
 
 pub fn set_rx_poll_fn(poll: fn() -> Option<u8>) {
-    RX_POLL_FN.call_once(|| poll);
+    *RX_POLL_FN.lock() = Some(poll);
 }
 
 pub fn push_to_rx_buf(byte: u8) {
@@ -116,7 +116,7 @@ pub fn pop_from_rx_buf() -> Option<u8> {
         return Some(byte);
     }
 
-    let poll = *RX_POLL_FN.get()?;
+    let poll = (*RX_POLL_FN.lock())?;
     crate::arch::disable_irq();
     let byte = poll();
     crate::arch::enable_irq();

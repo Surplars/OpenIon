@@ -106,10 +106,10 @@ fn external_irq_handler() {
     }
 
     let _handled = DriverManager::dispatch_irq(irq);
-    if irq == UART0_IRQ {
+    if irq == UART0_IRQ && !_handled {
         let _ = drain_platform_uart_rx();
         #[cfg(feature = "driver_ns16550a")]
-        let _ = _handled || UART_DRIVER.irq_pending();
+        let _ = UART_DRIVER.irq_pending();
     }
     plic::complete(irq);
 }

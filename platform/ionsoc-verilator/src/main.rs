@@ -158,9 +158,9 @@ fn external_irq_handler() {
     }
 
     let handled = DriverManager::dispatch_irq(irq);
-    if irq == uart_irq() {
+    if irq == uart_irq() && !handled {
         let _ = drain_platform_uart_rx();
-        let _ = handled || early_uart_irq_pending();
+        let _ = early_uart_irq_pending();
     }
     plic::complete(irq);
 }

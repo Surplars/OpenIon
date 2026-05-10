@@ -1,5 +1,6 @@
 #![no_std]
 
+use core::sync::atomic::{AtomicPtr, Ordering};
 use kernel::driver::char::{CharDevice, DynCharDevice};
 use kernel::driver::manager::AnyDriver;
 use kernel::driver::terminal::{DynTerminalDevice, TerminalDevice};
@@ -20,6 +21,9 @@ const LSR: usize = 5; // Line Status
 const LSR_DR: u8 = 1 << 0; // Data Ready
 const LSR_THRE: u8 = 1 << 5; // TX Holding Register Empty
 const IIR_NO_INT: u8 = 1 << 0;
+
+static ACTIVE_UART: AtomicPtr<Ns16550a> = AtomicPtr::new(core::ptr::null_mut());
+static NS16550A_CONSOLE: Ns16550aConsole = Ns16550aConsole;
 
 pub struct Ns16550a {
     base_addr: usize,
@@ -77,6 +81,37 @@ impl Ns16550a {
     pub fn irq_pending(&self) -> bool {
         unsafe { self.reg(IIR).read_volatile() & IIR_NO_INT == 0 }
     }
+
+    fn set_active(&self) {
+        ACTIVE_UART.store(self as *const Self as *mut Self, Ordering::Release);
+        kernel::log::set_console(&NS16550A_CONSOLE);
+        kernel::driver::char::set_rx_poll_fn(active_uart_getc);
+    }
+}
+
+struct Ns16550aConsole;
+
+unsafe impl Sync for Ns16550aConsole {}
+
+impl kernel::log::PlatformConsole for Ns16550aConsole {
+    fn putc(&self, ch: u8) {
+        if let Some(uart) = active_uart() {
+            uart.putc(ch);
+        }
+    }
+}
+
+fn active_uart() -> Option<&'static Ns16550a> {
+    let ptr = ACTIVE_UART.load(Ordering::Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*ptr })
+    }
+}
+
+fn active_uart_getc() -> Option<u8> {
+    active_uart().and_then(Ns16550a::getc)
 }
 
 impl Driver for Ns16550a {
@@ -93,6 +128,7 @@ impl Driver for Ns16550a {
 
     fn init(&self) -> DriverResult<()> {
         self.init_hw();
+        self.set_active();
         kernel::kinfo!("NS16550A UART initialized with RX interrupt enabled");
         Ok(())
     }

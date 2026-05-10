@@ -17,11 +17,11 @@ pub enum LogLevel {
     Error,
 }
 
-static CONSOLE: Once<&'static (dyn PlatformConsole + Sync)> = Once::new();
+static CONSOLE: Mutex<Option<&'static (dyn PlatformConsole + Sync)>> = Mutex::new(None);
 static CPU_PROVIDER: Once<&'static (dyn CpuIdProvider + Sync)> = Once::new();
 
 pub fn set_console(console: &'static (dyn PlatformConsole + Sync)) {
-    CONSOLE.call_once(|| console);
+    *CONSOLE.lock() = Some(console);
 }
 
 pub fn set_cpu_id_provider(provider: &'static (dyn CpuIdProvider + Sync)) {
@@ -29,7 +29,7 @@ pub fn set_cpu_id_provider(provider: &'static (dyn CpuIdProvider + Sync)) {
 }
 
 pub fn console() -> Option<&'static (dyn PlatformConsole + Sync)> {
-    CONSOLE.get().copied()
+    *CONSOLE.lock()
 }
 
 struct ConsoleWriter;
