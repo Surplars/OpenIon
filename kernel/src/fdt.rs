@@ -10,6 +10,8 @@ const FDT_PROP: u32 = 0x0000_0003;
 const FDT_NOP: u32 = 0x0000_0004;
 const FDT_END: u32 = 0x0000_0009;
 const MAX_DEPTH: usize = 16;
+const DEFAULT_ADDRESS_CELLS: u8 = 2;
+const DEFAULT_SIZE_CELLS: u8 = 1;
 
 /// Callback for each device node found in the FDT.
 /// Args: node_name, compatible, reg (base_addr, size), interrupt (first interrupt cell, 0 if none)
@@ -28,6 +30,10 @@ pub struct FdtNode<'a> {
     reg: Option<&'a [u8]>,
     interrupt: Option<u32>,
     timebase_frequency: Option<u32>,
+    address_cells: u8,
+    size_cells: u8,
+    child_address_cells: u8,
+    child_size_cells: u8,
 }
 
 impl<'a> FdtNode<'a> {
@@ -60,19 +66,23 @@ impl<'a> FdtNode<'a> {
 
     pub fn first_reg(&self) -> Option<FdtReg> {
         let reg = self.reg?;
-        if reg.len() >= 16 {
-            Some(FdtReg {
-                base: read_be64_slice(&reg[0..8]) as usize,
-                size: read_be64_slice(&reg[8..16]) as usize,
-            })
-        } else if reg.len() >= 8 {
-            Some(FdtReg {
-                base: read_be32_slice(&reg[0..4]) as usize,
-                size: read_be32_slice(&reg[4..8]) as usize,
-            })
-        } else {
-            None
+        let address_cells = self.address_cells as usize;
+        let size_cells = self.size_cells as usize;
+        let entry_cells = address_cells.checked_add(size_cells)?;
+        let entry_len = entry_cells.checked_mul(core::mem::size_of::<u32>())?;
+        if entry_len == 0 || reg.len() < entry_len {
+            return None;
         }
+
+        let base = read_cells(&reg[..address_cells * 4], address_cells)? as usize;
+        let size_start = address_cells * 4;
+        let size = if size_cells == 0 {
+            0
+        } else {
+            read_cells(&reg[size_start..size_start + size_cells * 4], size_cells)? as usize
+        };
+
+        Some(FdtReg { base, size })
     }
 
     pub const fn interrupt(&self) -> Option<u32> {
@@ -88,6 +98,14 @@ impl<'a> FdtNode<'a> {
 
     pub const fn timebase_frequency(&self) -> Option<u32> {
         self.timebase_frequency
+    }
+
+    pub const fn address_cells(&self) -> u8 {
+        self.address_cells
+    }
+
+    pub const fn size_cells(&self) -> u8 {
+        self.size_cells
     }
 }
 
@@ -173,12 +191,24 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                 pos = unsafe { pos.add((len + 4) & !3) };
 
                 if depth < MAX_DEPTH {
+                    let (address_cells, size_cells) = if depth == 0 {
+                        (DEFAULT_ADDRESS_CELLS, DEFAULT_SIZE_CELLS)
+                    } else if let Some(parent) = nodes[depth - 1] {
+                        (parent.child_address_cells, parent.child_size_cells)
+                    } else {
+                        (DEFAULT_ADDRESS_CELLS, DEFAULT_SIZE_CELLS)
+                    };
+
                     nodes[depth] = Some(FdtNode {
                         name,
                         compatible: None,
                         reg: None,
                         interrupt: None,
                         timebase_frequency: None,
+                        address_cells,
+                        size_cells,
+                        child_address_cells: DEFAULT_ADDRESS_CELLS,
+                        child_size_cells: DEFAULT_SIZE_CELLS,
                     });
                 }
                 depth += 1;
@@ -234,6 +264,18 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                             node.timebase_frequency = Some(read_be32_slice(&data[0..4]));
                         }
                     }
+                    "#address-cells" => {
+                        if len >= 4 {
+                            node.child_address_cells =
+                                read_be32_slice(&data[0..4]).min(u8::MAX as u32) as u8;
+                        }
+                    }
+                    "#size-cells" => {
+                        if len >= 4 {
+                            node.child_size_cells =
+                                read_be32_slice(&data[0..4]).min(u8::MAX as u32) as u8;
+                        }
+                    }
                     _ => {}
                 }
 
@@ -255,6 +297,21 @@ pub fn read_be64_slice(bytes: &[u8]) -> u64 {
     u64::from_be_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ])
+}
+
+fn read_cells(bytes: &[u8], cells: usize) -> Option<u64> {
+    if cells == 0 {
+        return Some(0);
+    }
+    if cells > 2 || bytes.len() < cells * 4 {
+        return None;
+    }
+
+    let mut value = 0u64;
+    for i in 0..cells {
+        value = (value << 32) | read_be32_slice(&bytes[i * 4..i * 4 + 4]) as u64;
+    }
+    Some(value)
 }
 
 unsafe fn fdt_string(ptr: *const u8) -> &'static str {
