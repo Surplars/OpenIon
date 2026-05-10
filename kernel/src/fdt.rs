@@ -29,6 +29,7 @@ pub struct FdtNode<'a> {
     compatible: Option<&'a [u8]>,
     reg: Option<&'a [u8]>,
     interrupt: Option<u32>,
+    interrupts_extended: Option<&'a [u8]>,
     timebase_frequency: Option<u32>,
     device_type: Option<&'a [u8]>,
     stdout_path: Option<&'a [u8]>,
@@ -91,11 +92,24 @@ impl<'a> FdtNode<'a> {
         self.interrupt
     }
 
-    pub const fn interrupt_or_zero(&self) -> u32 {
-        match self.interrupt {
-            Some(irq) => irq,
-            None => 0,
+    pub fn interrupt_or_zero(&self) -> u32 {
+        self.interrupt()
+            .or_else(|| self.interrupts_extended_irq())
+            .unwrap_or(0)
+    }
+
+    pub const fn interrupts_extended_raw(&self) -> Option<&'a [u8]> {
+        self.interrupts_extended
+    }
+
+    pub fn interrupts_extended_irq(&self) -> Option<u32> {
+        let data = self.interrupts_extended?;
+        if data.len() < 8 || data.len() % 4 != 0 {
+            return None;
         }
+
+        let cells = data.len() / 4;
+        Some(read_be32_slice(&data[(cells - 1) * 4..cells * 4]))
     }
 
     pub const fn timebase_frequency(&self) -> Option<u32> {
@@ -218,6 +232,7 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                         compatible: None,
                         reg: None,
                         interrupt: None,
+                        interrupts_extended: None,
                         timebase_frequency: None,
                         device_type: None,
                         stdout_path: None,
@@ -275,6 +290,7 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                             node.interrupt = Some(read_be32_slice(&data[0..4]));
                         }
                     }
+                    "interrupts-extended" => node.interrupts_extended = Some(data),
                     "timebase-frequency" => {
                         if len >= 4 {
                             node.timebase_frequency = Some(read_be32_slice(&data[0..4]));
