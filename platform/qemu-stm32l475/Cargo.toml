@@ -1,0 +1,22 @@
+[package]
+name = "qemu-stm32l475"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "qemu-stm32l475"
+test = false
+bench = false
+
+[dependencies]
+kernel = { path = "../../kernel", default-features = false }
+arch = { path = "../../arch", default-features = false }
+app = { path = "../../app", default-features = false }
+stm32l4x5_usart = { path = "../../drivers/stm32l4x5_usart", optional = true }
+
+[features]
+default = ["builtin_shell"]
+async_rt = ["app/async_rt", "arch/async_rt"]
+builtin_shell = ["app/builtin_shell"]
+mcu_profile = ["app/mcu_profile", "kernel/mcu_profile"]
+driver_stm32l4x5_usart = ["dep:stm32l4x5_usart"]

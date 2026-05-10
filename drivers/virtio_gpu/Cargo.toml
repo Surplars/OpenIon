@@ -1,0 +1,12 @@
+[package]
+name = "virtio_gpu"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+kernel = { path = "../../kernel" }
+virtio_common = { path = "../virtio_common" }

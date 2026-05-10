@@ -1,8 +1,9 @@
 #![no_std]
 
 use bitflags::bitflags;
-use kernel::driver::char::CharDevice;
+use kernel::driver::char::{CharDevice, DynCharDevice};
 use kernel::driver::manager::AnyDriver;
+use kernel::driver::terminal::{DynTerminalDevice, TerminalDevice};
 use kernel::driver::{
     DeviceConfig, DeviceResource, Driver, DriverErr, DriverFactory, DriverResult,
     GenericDeviceConfig, StaticDriverPool,
@@ -102,6 +103,16 @@ impl Driver for CmsdkUart {
             false
         }
     }
+
+    fn as_char_device(&self) -> Option<&'static DynCharDevice> {
+        let dev: &DynCharDevice = self;
+        Some(unsafe { core::mem::transmute::<&DynCharDevice, &'static DynCharDevice>(dev) })
+    }
+
+    fn as_terminal_device(&self) -> Option<&'static DynTerminalDevice> {
+        let dev: &DynTerminalDevice = self;
+        Some(unsafe { core::mem::transmute::<&DynTerminalDevice, &'static DynTerminalDevice>(dev) })
+    }
 }
 
 impl CharDevice for CmsdkUart {
@@ -135,6 +146,8 @@ impl CharDevice for CmsdkUart {
         DriverResult::Ok(byte)
     }
 }
+
+impl TerminalDevice for CmsdkUart {}
 
 /// FDT-compatible factory for CMSDK UART.
 /// Matches compatible = "arm,cmsdk-uart" and creates a driver instance.

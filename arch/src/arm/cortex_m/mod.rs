@@ -24,6 +24,10 @@ impl kernel::arch::Arch for CortexM {
         context::yield_cpu();
     }
 
+    fn idle_hint() {
+        cortex_m::asm::wfi();
+    }
+
     fn start_first_task() -> ! {
         context::start_first_task();
     }

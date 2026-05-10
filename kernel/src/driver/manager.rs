@@ -10,6 +10,12 @@ pub trait AnyDriver: Send + Sync {
     fn power_off(&self) -> DriverResult<()>;
     fn state(&self) -> DeviceState;
     fn as_block_device(&self) -> Option<&'static super::block::DynBlockDevice>;
+    fn as_char_device(&self) -> Option<&'static super::char::DynCharDevice>;
+    fn as_terminal_device(&self) -> Option<&'static super::terminal::DynTerminalDevice>;
+    fn as_gpio_controller(&self) -> Option<&'static super::gpio::DynGpioController>;
+    fn as_framebuffer_device(&self) -> Option<&'static super::framebuffer::DynFramebufferDevice>;
+    fn as_net_device(&self) -> Option<&'static super::net::DynNetDevice>;
+    fn as_rng_device(&self) -> Option<&'static super::rng::DynRngDevice>;
 }
 
 impl<T: Driver> AnyDriver for T {
@@ -36,6 +42,24 @@ impl<T: Driver> AnyDriver for T {
     }
     fn as_block_device(&self) -> Option<&'static super::block::DynBlockDevice> {
         self.as_block_device()
+    }
+    fn as_char_device(&self) -> Option<&'static super::char::DynCharDevice> {
+        self.as_char_device()
+    }
+    fn as_terminal_device(&self) -> Option<&'static super::terminal::DynTerminalDevice> {
+        self.as_terminal_device()
+    }
+    fn as_gpio_controller(&self) -> Option<&'static super::gpio::DynGpioController> {
+        self.as_gpio_controller()
+    }
+    fn as_framebuffer_device(&self) -> Option<&'static super::framebuffer::DynFramebufferDevice> {
+        self.as_framebuffer_device()
+    }
+    fn as_net_device(&self) -> Option<&'static super::net::DynNetDevice> {
+        self.as_net_device()
+    }
+    fn as_rng_device(&self) -> Option<&'static super::rng::DynRngDevice> {
+        self.as_rng_device()
     }
 }
 
@@ -164,22 +188,17 @@ impl DriverManager {
         let mut count = 0usize;
 
         unsafe {
-            crate::fdt::parse_with(dtb, |_name, compat, reg, interrupt| {
-                if reg.len() < 16 {
+            crate::fdt::walk_nodes(dtb, |node| {
+                let Some(reg) = node.first_reg() else {
                     return;
-                }
-                let base_addr = u64::from_be_bytes([
-                    reg[0], reg[1], reg[2], reg[3], reg[4], reg[5], reg[6], reg[7],
-                ]) as usize;
-                let size = u64::from_be_bytes([
-                    reg[8], reg[9], reg[10], reg[11], reg[12], reg[13], reg[14], reg[15],
-                ]) as usize;
-                let resource = DeviceResource::new(base_addr, size, interrupt);
+                };
+                let resource = DeviceResource::new(reg.base, reg.size, node.interrupt_or_zero());
 
+                let mut probed = false;
                 for factory in factories.iter() {
                     if let Some(f) = *factory {
                         for &c in f.compatible() {
-                            if compat == c {
+                            if node.compatible_matches(c) {
                                 if let Some(driver) = f.probe(resource) {
                                     if Self::register_driver(driver).is_ok() {
                                         if driver.auto_init().is_ok() {
@@ -192,10 +211,16 @@ impl DriverManager {
                                             );
                                         }
                                         count += 1;
+                                        probed = true;
                                     }
                                 }
-                                break;
+                                if probed {
+                                    break;
+                                }
                             }
+                        }
+                        if probed {
+                            break;
                         }
                     }
                 }

@@ -11,3 +11,6 @@ pub use smoltcp::*; // 把方法暴露出来给外部统一调用
 pub mod ionnet;
 #[cfg(feature = "use_ionnet")]
 pub use ionnet::*;
+
+#[cfg(not(any(feature = "use_smoltcp", feature = "use_ionnet")))]
+pub fn init<P: crate::platform::Platform>() {}

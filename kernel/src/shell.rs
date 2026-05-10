@@ -5,7 +5,10 @@
 
 use crate::{kp, kpln};
 
-pub const BUILTIN_SHELL_STACK_SIZE: usize = 32 * 1024;
+#[cfg(feature = "mcu_profile")]
+pub const BUILTIN_SHELL_STACK_SIZE: usize = 8 * 1024;
+#[cfg(not(feature = "mcu_profile"))]
+pub const BUILTIN_SHELL_STACK_SIZE: usize = crate::generated_config::OPENION_SHELL_STACK_SIZE;
 const LS_BUF_CAP: usize = 32;
 
 struct ShellState {
@@ -72,7 +75,7 @@ pub fn shell_main() -> ! {
 
     loop {
         let Some(c) = crate::driver::char::pop_from_rx_buf() else {
-            core::hint::spin_loop();
+            crate::arch::idle_hint();
             continue;
         };
 
@@ -249,8 +252,28 @@ fn complete_command(
     cursor_end: &mut usize,
 ) {
     const COMMANDS: &[&str] = &[
-        "help", "version", "ver", "clear", "uptime", "ls", "cd", "cat", "mkdir", "touch", "echo",
-        "vm", "mount", "mem", "tasks", "ps",
+        "help",
+        "version",
+        "ver",
+        "clear",
+        "uptime",
+        "ls",
+        "cd",
+        "cat",
+        "mkdir",
+        "touch",
+        "echo",
+        "vm",
+        "mount",
+        "mem",
+        "tasks",
+        "ps",
+        "drivers",
+        "term",
+        "gpio",
+        "irq",
+        #[cfg(feature = "async_rt")]
+        "async",
     ];
 
     let input = core::str::from_utf8(&buf[..input_len]).unwrap_or("");
@@ -289,7 +312,7 @@ fn complete_command(
             kpln!("");
             shell_prompt(state);
             for i in 0..*cursor_end {
-                kp!("{} ", buf[i] as char);
+                kp!("{}", buf[i] as char);
             }
         }
     }
@@ -500,6 +523,12 @@ fn execute_command(state: &mut ShellState, input: &str) {
         "mount" => cmd_mount(args),
         "mem" => cmd_mem(),
         "tasks" | "ps" => cmd_tasks(),
+        "drivers" => cmd_drivers(),
+        "term" => cmd_term(),
+        "gpio" => cmd_gpio(),
+        "irq" => cmd_irq(),
+        #[cfg(feature = "async_rt")]
+        "async" => cmd_async(args),
         _ => {
             kpln!("{}: command not found", cmd);
         }
@@ -514,6 +543,12 @@ fn cmd_help() {
     kpln!("  uptime            Show system uptime");
     kpln!("  mem               Show memory info");
     kpln!("  tasks / ps        List running tasks");
+    kpln!("  drivers           List registered drivers");
+    kpln!("  term              List terminal devices");
+    kpln!("  gpio              List GPIO controllers");
+    kpln!("  irq               Show IRQ statistics");
+    #[cfg(feature = "async_rt")]
+    kpln!("  async             Show async executor stats");
     kpln!("  ls [path]         List directory");
     kpln!("  cd [path]         Change current directory");
     kpln!("  cat <file>        Read file");
@@ -523,6 +558,7 @@ fn cmd_help() {
     kpln!("  mount [dev target] List or mount block device");
     kpln!("  mount -u <target> Unmount filesystem");
     kpln!("  vm create <name>  Create a VM");
+    kpln!("  vm load-demo <name> Prepare demo guest metadata");
     kpln!("  vm list           List VMs");
     kpln!("  vm run <name>     Run a VM");
 }
@@ -536,6 +572,41 @@ fn cmd_uptime() {
     let secs = ticks / 1000;
     let ms = ticks % 1000;
     kpln!("Uptime: {}.{:03}s ({} ticks)", secs, ms, ticks);
+}
+
+#[cfg(feature = "async_rt")]
+fn cmd_async(args: &str) {
+    if args == "wake" {
+        crate::sched::async_rt::signal_demo_event();
+        kpln!("async: demo event signaled");
+        return;
+    }
+
+    let stats = crate::sched::async_rt::stats();
+    kpln!("Async runtime:");
+    kpln!(
+        "  enabled={}, slots={}, active={}, sleeping={}, spawned={}, completed={}",
+        stats.enabled,
+        stats.slots,
+        stats.active,
+        stats.sleeping,
+        stats.spawned,
+        stats.completed,
+    );
+    kpln!(
+        "  polls={}, wakes={}, heartbeat={}, demo_events={}",
+        stats.polls,
+        stats.wakes,
+        stats.heartbeat_ticks,
+        stats.demo_events,
+    );
+    kpln!(
+        "  rx_bytes={}, rx_events={}, last_rx=0x{:02x}",
+        stats.rx_bytes,
+        stats.rx_events,
+        stats.last_rx_byte,
+    );
+    kpln!("  async wake        Signal demo async event");
 }
 
 fn cmd_mem() {
@@ -568,6 +639,160 @@ fn cmd_mem() {
         stats.frames.free_pages * crate::mm::PAGE_SIZE / 1024,
     );
     kpln!("  object pools: {}", stats.object_pool_algorithm);
+}
+
+fn cmd_drivers() {
+    kpln!("Drivers:");
+    let mut count = 0usize;
+    crate::driver::manager::DriverManager::for_each_driver(|drv| {
+        count += 1;
+        kp!(
+            "  {}: state={}, class=",
+            drv.name(),
+            driver_state_name(drv.state())
+        );
+        let mut any_class = false;
+        if drv.as_block_device().is_some() {
+            kp!("block");
+            any_class = true;
+        }
+        if drv.as_char_device().is_some() {
+            if any_class {
+                kp!(",");
+            }
+            kp!("char");
+            any_class = true;
+        }
+        if drv.as_terminal_device().is_some() {
+            if any_class {
+                kp!(",");
+            }
+            kp!("terminal");
+            any_class = true;
+        }
+        if drv.as_gpio_controller().is_some() {
+            if any_class {
+                kp!(",");
+            }
+            kp!("gpio");
+            any_class = true;
+        }
+        if drv.as_framebuffer_device().is_some() {
+            if any_class {
+                kp!(",");
+            }
+            kp!("framebuffer");
+            any_class = true;
+        }
+        if drv.as_net_device().is_some() {
+            if any_class {
+                kp!(",");
+            }
+            kp!("net");
+            any_class = true;
+        }
+        if drv.as_rng_device().is_some() {
+            if any_class {
+                kp!(",");
+            }
+            kp!("rng");
+            any_class = true;
+        }
+        if !any_class {
+            kp!("other");
+        }
+        kpln!("");
+    });
+    if count == 0 {
+        kpln!("  none");
+    }
+}
+
+fn cmd_term() {
+    kpln!("Terminal devices:");
+    let mut count = 0usize;
+    crate::driver::manager::DriverManager::for_each_driver(|drv| {
+        if let Some(term) = drv.as_terminal_device() {
+            let size = term.size();
+            kpln!(
+                "  {}: {}x{}, mode={}, state={}",
+                drv.name(),
+                size.columns,
+                size.rows,
+                terminal_mode_name(term.mode()),
+                driver_state_name(drv.state())
+            );
+            count += 1;
+        }
+    });
+    if count == 0 {
+        kpln!("  none");
+    }
+}
+
+fn cmd_gpio() {
+    kpln!("GPIO controllers:");
+    let mut count = 0usize;
+    crate::driver::manager::DriverManager::for_each_driver(|drv| {
+        if let Some(gpio) = drv.as_gpio_controller() {
+            kpln!(
+                "  {}: {} pin(s), state={}",
+                drv.name(),
+                gpio.pin_count(),
+                driver_state_name(drv.state())
+            );
+            count += 1;
+        }
+    });
+    if count == 0 {
+        kpln!("  none");
+    }
+}
+
+fn cmd_irq() {
+    let stats = crate::irq::stats();
+    kpln!("IRQs:");
+    kpln!(
+        "  configured={}, registered_handlers={}",
+        stats.configured_count,
+        stats.registered_handlers
+    );
+    kpln!(
+        "  handled={}, unhandled={}, out_of_range={}",
+        stats.handled,
+        stats.unhandled,
+        stats.out_of_range
+    );
+    kp!("  last=");
+    print_irq_value(stats.last_irq);
+    kp!(", last_unhandled=");
+    print_irq_value(stats.last_unhandled_irq);
+    kpln!("");
+}
+
+fn print_irq_value(irq: u32) {
+    if irq == u32::MAX {
+        kp!("none");
+    } else {
+        kp!("{}", irq);
+    }
+}
+
+fn driver_state_name(state: crate::driver::DeviceState) -> &'static str {
+    match state {
+        crate::driver::DeviceState::Uninitialized => "uninit",
+        crate::driver::DeviceState::Ready => "ready",
+        crate::driver::DeviceState::Busy => "busy",
+        crate::driver::DeviceState::Error => "error",
+        crate::driver::DeviceState::Suspended => "suspend",
+    }
+}
+
+fn terminal_mode_name(mode: crate::driver::terminal::TerminalMode) -> &'static str {
+    match mode {
+        crate::driver::terminal::TerminalMode::Raw => "raw",
+        crate::driver::terminal::TerminalMode::Cooked => "cooked",
+    }
 }
 
 fn cmd_tasks() {
@@ -942,26 +1167,87 @@ fn cmd_vm(args: &str) {
         None => (args, ""),
     };
     match subcmd {
+        "" | "status" => cmd_vm_status(),
         "create" => {
             if subargs.is_empty() {
                 kpln!("vm create <name>");
                 return;
             }
-            kpln!("VM '{}' created (placeholder)", subargs);
+            match crate::hv::create_vm(subargs) {
+                Ok(id) => kpln!("VM '{}' created id={}", subargs, id),
+                Err(err) => kpln!("vm: {}", err.message()),
+            }
         }
         "list" => {
-            kpln!("VMs: (none)");
+            let (vms, count) = crate::hv::list_vms();
+            kpln!("VMs: {}", count);
+            for vm in vms.iter().flatten() {
+                kpln!(
+                    "  {}#{} state={} vcpus={} guest={:#x}+{:#x} host={:#x} entry={:#x}",
+                    vm.name_str(),
+                    vm.id,
+                    vm.state.as_str(),
+                    vm.vcpu_count,
+                    vm.guest_base,
+                    vm.guest_size,
+                    vm.host_base,
+                    vm.entry
+                );
+            }
+        }
+        "load-demo" => {
+            if subargs.is_empty() {
+                kpln!("vm load-demo <name>");
+                return;
+            }
+            match crate::hv::load_demo(subargs) {
+                Ok(()) => kpln!("VM '{}' demo guest ready", subargs),
+                Err(err) => kpln!("vm: {}", err.message()),
+            }
         }
         "run" => {
             if subargs.is_empty() {
                 kpln!("vm run <name>");
                 return;
             }
-            kpln!("VM '{}' run (not yet implemented)", subargs);
+            match crate::hv::find_vm(subargs) {
+                Ok(vm) => {
+                    if vm.state != crate::hv::VmState::Ready {
+                        kpln!("vm: '{}' is {}", subargs, vm.state.as_str());
+                        return;
+                    }
+                    kpln!("vm: guest execution is not wired to a loader yet");
+                }
+                Err(err) => kpln!("vm: {}", err.message()),
+            }
         }
         "stop" => {
-            kpln!("VM stop (not yet implemented)");
+            kpln!("vm: stop is not wired yet");
         }
         _ => kpln!("vm: unknown subcommand '{}'", subcmd),
     }
+}
+
+fn cmd_vm_status() {
+    let stats = crate::hv::stats();
+    kpln!("Hypervisor:");
+    kpln!(
+        "  compiled={}, enabled={}, state={}, h_extension={}",
+        stats.compiled,
+        stats.enabled,
+        stats.state.as_str(),
+        stats.h_extension
+    );
+    kpln!(
+        "  vms={}, vcpus={}, exits={}",
+        stats.vm_count,
+        stats.vcpu_count,
+        stats.exits
+    );
+    kpln!(
+        "  last_exit={}, cause={:#x}, stval={:#x}",
+        stats.last_exit.as_str(),
+        stats.last_cause,
+        stats.last_stval
+    );
 }

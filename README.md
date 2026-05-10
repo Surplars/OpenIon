@@ -13,6 +13,7 @@ memory management, and platform/architecture separation.
 |---|---|---|---|
 | `qemu-virt-riscv` | RISC-V 64 `rv64imac` | `qemu-system-riscv64 -machine virt` | `platform/qemu-virt-riscv` |
 | `qemu-an521` | ARM Cortex-M33 | `qemu-system-arm -M mps2-an521` | `platform/qemu-an521` |
+| `qemu-stm32l475` | ARM Cortex-M4 | `qemu-system-arm -M b-l475e-iot01a` | `platform/qemu-stm32l475` |
 
 ## Prerequisites
 
@@ -21,7 +22,7 @@ memory management, and platform/architecture separation.
   - `qemu-system-riscv64`
   - `qemu-system-arm`
 - RISC-V target: `riscv64imac-unknown-none-elf`
-- ARM target: `thumbv8m.main-none-eabihf`
+- ARM targets: `thumbv8m.main-none-eabihf`, `thumbv7m-none-eabi`
 
 ## Build
 
@@ -30,6 +31,7 @@ make config
 make menuconfig
 make build PLAT=qemu-virt-riscv
 make build PLAT=qemu-an521
+make build PLAT=qemu-stm32l475
 ```
 
 The Makefile delegates to `xtask`, which first generates
@@ -66,6 +68,7 @@ existing config.
 ```bash
 make run PLAT=qemu-virt-riscv
 make run PLAT=qemu-an521
+make run PLAT=qemu-stm32l475
 ```
 
 Use `Ctrl-A X` to exit QEMU in `-nographic` mode.
@@ -103,7 +106,7 @@ directories.
 | `kernel/` | Architecture-neutral kernel core: scheduler, IRQ table, memory, VFS, driver framework, networking framework, logging, versioning |
 | `arch/` | ISA/CPU-specific code: RISC-V traps, CSRs, context switch, SBI helpers, ARM Cortex-M context and NVIC/SysTick code |
 | `platform/` | Board/SoC binaries: linker scripts, startup assembly, platform MMIO addresses, PLIC/NVIC wiring, platform timers |
-| `drivers/` | Device driver crates: UART, VirtIO block, LAN9118 Ethernet |
+| `drivers/` | Device driver crates: UART/USART, VirtIO block, LAN9118 Ethernet |
 | `app/` | Root task and shell-facing application code |
 | `bootloader/` | Placeholder for future bootloader work |
 
@@ -113,8 +116,9 @@ directories.
   preemption points.
 - Interactive shell using an IRQ producer and shell consumer UART RX path.
 - Ionix-generated configuration for platform constants, scheduler tick rate,
-  IRQ table size, FDT auto-probing, built-in shell selection, RISC-V mode, and
-  network backend feature selection.
+  IRQ table size, FDT auto-probing, built-in shell selection, RISC-V mode,
+  optional RISC-V ISA extension toggles, and network backend feature
+  selection.
 - RAMFS-based VFS with stable `NodeId` handles.
 - Mount table snapshots to avoid printing or block I/O while holding locks.
 - Read-only exFAT mounting over VirtIO block on `qemu-virt-riscv`.
@@ -127,6 +131,8 @@ directories.
 Drivers implement `kernel::driver::Driver` and optionally a device-class trait:
 
 - `kernel::driver::char::CharDevice`
+- `kernel::driver::terminal::TerminalDevice`
+- `kernel::driver::gpio::GpioController`
 - `kernel::driver::block::BlockDevice`
 - `kernel::driver::net::NetDevice`
 
@@ -139,6 +145,16 @@ The driver manager provides snapshots for iteration and IRQ dispatch so callers
 do not print, call back into drivers, or perform block I/O while holding the
 registry lock.
 
+## STM32 Notes
+
+QEMU includes several STM32-class boards, but peripheral coverage is partial.
+The `qemu-stm32l475` platform targets `b-l475e-iot01a` as a small MCU profile:
+it disables heavyweight optional paths and uses reduced fixed-capacity kernel
+structures. The first supported device is USART1 through
+`drivers/stm32l4x5_usart`; GPIO framework support exists in the kernel, but
+QEMU STM32 GPIO behavior should be treated as a portability smoke test rather
+than complete hardware validation.
+
 ## RISC-V Notes
 
 `qemu-virt-riscv` defaults to `s-mode`. The platform receives `hartid` and
@@ -148,6 +164,9 @@ DTB address configured in `.config.toml`.
 RISC-V CSR access, SBI calls, trap setup, and timer interrupt enables live under
 `arch/src/riscv`. QEMU virt MMIO details such as PLIC and CLINT addresses remain
 under `platform/qemu-virt-riscv`.
+
+The schema also exposes the RISC-V compressed-instruction toggle, so the
+platform can be built as IMA-only when needed.
 
 ## Hypervisor Status
 

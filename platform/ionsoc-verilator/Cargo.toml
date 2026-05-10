@@ -1,0 +1,25 @@
+[package]
+name = "ionsoc-verilator"
+version = "0.1.0"
+authors = ["Surplars <surplars@vip.qq.com>"]
+edition = "2024"
+
+[[bin]]
+name = "ionsoc-verilator"
+test = false
+bench = false
+
+[dependencies]
+app = { path = "../../app", default-features = false }
+arch = { path = "../../arch", default-features = false }
+kernel = { path = "../../kernel", default-features = false }
+ns16550a = { path = "../../drivers/ns16550a", optional = true }
+spin = "0.10.0"
+
+[features]
+default = ["s-mode", "builtin_shell"]
+async_rt = ["app/async_rt", "arch/async_rt"]
+builtin_shell = ["app/builtin_shell"]
+driver_ns16550a = ["dep:ns16550a"]
+m-mode = ["arch/m-mode"]
+s-mode = ["arch/s-mode"]

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use core::ptr;
 use kernel::mm::addr::{PAGE_SHIFT, PAGE_SIZE, PhysAddr, VirtAddr};
 use kernel::mm::{MemPerms, MmError};

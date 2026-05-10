@@ -1,10 +1,13 @@
 #![no_std]
 
+extern crate alloc;
+
 pub mod arch;
 pub mod driver;
 pub mod fdt;
 pub mod fs;
 pub mod generated_config;
+pub mod hv;
 pub mod irq;
 pub mod log;
 pub mod mm;
@@ -15,6 +18,7 @@ pub mod sched;
 #[cfg(feature = "builtin_shell")]
 pub mod shell;
 pub mod sync;
+pub mod syscall;
 pub mod timer;
 pub mod version;
 
@@ -23,6 +27,9 @@ use platform::{Platform, PlatformConfig};
 
 pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
     arch::init::<A>();
+    P::init_console();
+    P::discover_early_devices();
+    P::register_driver_factories();
     P::early_init();
 
     version::banner();
@@ -32,9 +39,12 @@ pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
     kinfo!("config written");
     mm::init(&config);
     core_init();
+    hv::init(cfg!(feature = "hypervisor"), false);
     kinfo!("kernel core init done");
+    P::init_irqs();
+    P::init_timer();
 
-    if generated_config::OPENION_FDT_AUTO_PROBE {
+    if generated_config::OPENION_FDT && generated_config::OPENION_FDT_AUTO_PROBE {
         // FDT auto-probing: discover and init drivers from device tree.
         let fdt_count = driver::manager::DriverManager::auto_probe_fdt();
         if fdt_count > 0 {
@@ -95,6 +105,8 @@ fn register_dev_files() {
 
     let mut blk_idx: u32 = 0;
     let mut char_idx: u32 = 0;
+    let mut gpio_idx: u32 = 0;
+    let mut net_idx: u32 = 0;
 
     driver::manager::DriverManager::for_each_driver(|drv| {
         let dev_name = if drv.as_block_device().is_some() {
@@ -113,7 +125,7 @@ fn register_dev_files() {
             let len = b.len().min(15);
             buf[..len].copy_from_slice(&b[..len]);
             (buf, len)
-        } else {
+        } else if drv.as_char_device().is_some() {
             char_idx += 1;
             let idx = char_idx - 1;
             let mut buf = [0u8; 16];
@@ -128,6 +140,38 @@ fn register_dev_files() {
             let len = b.len().min(15);
             buf[..len].copy_from_slice(&b[..len]);
             (buf, len)
+        } else if drv.as_gpio_controller().is_some() {
+            gpio_idx += 1;
+            let idx = gpio_idx - 1;
+            let mut buf = [0u8; 16];
+            let s = if idx == 0 {
+                "gpio0"
+            } else if idx == 1 {
+                "gpio1"
+            } else {
+                "gpio2"
+            };
+            let b = s.as_bytes();
+            let len = b.len().min(15);
+            buf[..len].copy_from_slice(&b[..len]);
+            (buf, len)
+        } else if drv.as_net_device().is_some() {
+            net_idx += 1;
+            let idx = net_idx - 1;
+            let mut buf = [0u8; 16];
+            let s = if idx == 0 {
+                "eth0"
+            } else if idx == 1 {
+                "eth1"
+            } else {
+                "eth2"
+            };
+            let b = s.as_bytes();
+            let len = b.len().min(15);
+            buf[..len].copy_from_slice(&b[..len]);
+            (buf, len)
+        } else {
+            return;
         };
         let name_str = core::str::from_utf8(&dev_name.0[..dev_name.1]).unwrap_or("");
         match fs::lookup(dev, name_str) {

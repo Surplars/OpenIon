@@ -1,11 +1,7 @@
 use crate::QemuVirtRiscv;
 use kernel::platform::Platform;
 
-const CLINT_BASE: usize = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_CLINT_BASE;
-const CLINT_MTIME: usize = CLINT_BASE + 0xBFF8;
-
-#[cfg(feature = "m-mode")]
-const CLINT_MTIMECMP: usize = CLINT_BASE + 0x4000;
+const CLINT_BASE: usize = 0x0200_0000;
 
 pub fn init_timer() {
     kernel::platform::set_next_timer_tick(set_next_tick);
@@ -16,11 +12,12 @@ pub fn init_timer() {
 pub fn set_next_tick() {
     let cfg = QemuVirtRiscv::config();
     let increment = (cfg.cpu_freq_hz / cfg.systick_hz) as u64;
-    let deadline = unsafe { (CLINT_MTIME as *const u64).read_volatile() } + increment;
+    let clint = arch::riscv::clint::Clint::new(CLINT_BASE);
+    let deadline = clint.mtime() + increment;
 
     #[cfg(feature = "m-mode")]
-    unsafe {
-        (CLINT_MTIMECMP as *mut u64).write_volatile(deadline);
+    {
+        clint.set_mtimecmp(0, deadline);
     }
 
     #[cfg(feature = "s-mode")]

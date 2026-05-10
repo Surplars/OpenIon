@@ -8,16 +8,28 @@ use kernel::driver::manager::{AnyDriver, DriverManager};
 use kernel::driver::net::DynNetDevice;
 use kernel::log::{CpuIdProvider, PlatformConsole, set_console, set_cpu_id_provider};
 use kernel::platform::{Platform, PlatformConfig};
+#[cfg(feature = "driver_ns16550a")]
 use ns16550a::{Ns16550a, Ns16550aFactory};
+#[cfg(feature = "driver_virtio_blk")]
 use virtio_blk::VirtioBlkFactory;
+#[cfg(feature = "driver_virtio_gpu")]
+use virtio_gpu::VirtioGpuFactory;
+#[cfg(feature = "driver_virtio_rng")]
+use virtio_rng::VirtioRngFactory;
 
 pub struct QemuVirtRiscv;
 
-const UART0_BASE: usize = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_UART0_BASE;
-const UART0_IRQ: u32 = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_UART0_IRQ;
-const VIRTIO_BLK0_IRQ: u32 = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_VIRTIO_BLK_IRQ;
-const DEFAULT_DTB_ADDR: usize = kernel::generated_config::OPENION_QEMU_VIRT_RISCV_DTB_ADDR;
+const CPU_FREQ_HZ: u32 = 10_000_000;
+const MEMORY_BASE: usize = 0x8000_0000;
+const MEMORY_SIZE: usize = 128 * 1024 * 1024;
+#[cfg(feature = "driver_ns16550a")]
+const UART0_BASE: usize = 0x1000_0000;
+const UART0_IRQ: u32 = 10;
+#[cfg(feature = "driver_virtio_blk")]
+const VIRTIO_BLK0_IRQ: u32 = 1;
+const DEFAULT_DTB_ADDR: usize = 0x8006_8000;
 
+#[cfg(feature = "driver_ns16550a")]
 static UART_DRIVER: Ns16550a = Ns16550a::new(UART0_BASE, UART0_IRQ);
 
 static PLATFORM_DRIVERS: [&'static dyn AnyDriver; 0] = [];
@@ -59,16 +71,32 @@ impl PlatformConsole for UartConsole {
 static UART_CONSOLE: UartConsole = UartConsole;
 
 fn poll_uart_rx() -> Option<u8> {
-    UART_DRIVER.getc()
+    #[cfg(feature = "driver_ns16550a")]
+    {
+        UART_DRIVER.getc()
+    }
+
+    #[cfg(not(feature = "driver_ns16550a"))]
+    {
+        None
+    }
 }
 
 fn drain_platform_uart_rx() -> bool {
-    let mut handled = false;
-    while let Some(byte) = UART_DRIVER.getc() {
-        kernel::driver::char::push_to_rx_buf(byte);
-        handled = true;
+    #[cfg(feature = "driver_ns16550a")]
+    {
+        let mut handled = false;
+        while let Some(byte) = UART_DRIVER.getc() {
+            kernel::driver::char::push_to_rx_buf(byte);
+            handled = true;
+        }
+        handled
     }
-    handled
+
+    #[cfg(not(feature = "driver_ns16550a"))]
+    {
+        false
+    }
 }
 
 fn external_irq_handler() {
@@ -77,23 +105,33 @@ fn external_irq_handler() {
         return;
     }
 
-    let handled = DriverManager::dispatch_irq(irq);
+    let _handled = DriverManager::dispatch_irq(irq);
     if irq == UART0_IRQ {
         let _ = drain_platform_uart_rx();
-        let _ = handled || UART_DRIVER.irq_pending();
+        #[cfg(feature = "driver_ns16550a")]
+        let _ = _handled || UART_DRIVER.irq_pending();
     }
     plic::complete(irq);
 }
 
 impl Platform for QemuVirtRiscv {
     fn early_init() {
+        #[cfg(feature = "driver_ns16550a")]
         UART_DRIVER.init_hw();
         set_console(&UART_CONSOLE);
         kernel::driver::char::set_rx_poll_fn(poll_uart_rx);
         set_cpu_id_provider(&CPU_ID);
+        #[cfg(feature = "hypervisor")]
+        arch::riscv::hypervisor::init_kernel_state();
 
+        #[cfg(feature = "driver_ns16550a")]
         let _ = DriverManager::register_factory(&Ns16550aFactory);
+        #[cfg(feature = "driver_virtio_blk")]
         let _ = DriverManager::register_factory(&VirtioBlkFactory);
+        #[cfg(feature = "driver_virtio_gpu")]
+        let _ = DriverManager::register_factory(&VirtioGpuFactory);
+        #[cfg(feature = "driver_virtio_rng")]
+        let _ = DriverManager::register_factory(&VirtioRngFactory);
 
         let dtb = kernel::platform::dtb_addr();
         if dtb == 0 {
@@ -103,7 +141,9 @@ impl Platform for QemuVirtRiscv {
         }
 
         plic::init();
+        #[cfg(feature = "driver_ns16550a")]
         plic::enable_irq(UART0_IRQ, 1);
+        #[cfg(feature = "driver_virtio_blk")]
         plic::enable_irq(VIRTIO_BLK0_IRQ, 1);
         arch::riscv::irq::enable_external_interrupts();
 
@@ -120,11 +160,11 @@ impl Platform for QemuVirtRiscv {
         }
 
         PlatformConfig {
-            cpu_freq_hz: kernel::generated_config::OPENION_QEMU_VIRT_RISCV_CPU_HZ,
+            cpu_freq_hz: CPU_FREQ_HZ,
             systick_hz: kernel::generated_config::OPENION_SYSTICK_HZ,
             external_irq_count: kernel::generated_config::OPENION_EXTERNAL_IRQ_COUNT,
-            memory_base: kernel::generated_config::OPENION_QEMU_VIRT_RISCV_MEMORY_BASE,
-            memory_size: kernel::generated_config::OPENION_QEMU_VIRT_RISCV_MEMORY_SIZE,
+            memory_base: MEMORY_BASE,
+            memory_size: MEMORY_SIZE,
             kernel_end: ekernel as *const () as usize,
         }
     }

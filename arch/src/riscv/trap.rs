@@ -80,6 +80,15 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
     #[cfg(feature = "m-mode")]
     let is_yield = cause
         == riscv::register::mcause::Trap::Exception(riscv::register::mcause::Exception::Breakpoint);
+    #[cfg(feature = "m-mode")]
+    let is_syscall = matches!(
+        cause,
+        riscv::register::mcause::Trap::Exception(
+            riscv::register::mcause::Exception::UserEnvCall
+                | riscv::register::mcause::Exception::SupervisorEnvCall
+                | riscv::register::mcause::Exception::MachineEnvCall
+        )
+    );
 
     #[cfg(feature = "s-mode")]
     let cause = riscv::register::scause::read().cause();
@@ -96,11 +105,21 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
     #[cfg(feature = "s-mode")]
     let is_yield = cause
         == riscv::register::scause::Trap::Exception(riscv::register::scause::Exception::Breakpoint);
+    #[cfg(feature = "s-mode")]
+    let is_syscall = matches!(
+        cause,
+        riscv::register::scause::Trap::Exception(
+            riscv::register::scause::Exception::UserEnvCall
+                | riscv::register::scause::Exception::SupervisorEnvCall
+        )
+    );
 
     if is_timer {
         kernel::timer::tick();
         kernel::platform::schedule_next_timer_tick();
         kernel::sched::Scheduler::tick_update();
+        #[cfg(feature = "async_rt")]
+        kernel::sched::async_rt::tick_update();
         kernel::sched::Scheduler::schedule();
 
         unsafe {
@@ -112,6 +131,24 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
     if is_yield {
         tf.epc += 4;
         kernel::sched::Scheduler::schedule();
+
+        unsafe {
+            kernel::arch::ARCH_CRIT_NEST -= 1;
+        }
+        return;
+    }
+
+    if is_syscall {
+        let args = kernel::syscall::SyscallArgs::new(
+            tf.x[17],
+            [tf.x[10], tf.x[11], tf.x[12], tf.x[13], tf.x[14], tf.x[15]],
+        );
+        let ret = kernel::syscall::dispatch(args);
+        tf.x[10] = ret.value as usize;
+        tf.epc += 4;
+        if !ret.schedule {
+            kernel::sched::Scheduler::schedule_if_preempt_pending();
+        }
 
         unsafe {
             kernel::arch::ARCH_CRIT_NEST -= 1;

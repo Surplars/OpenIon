@@ -39,6 +39,8 @@ pub extern "C" fn hardfault_handler(frame: &ExceptionFrame) {
 pub extern "C" fn systick_handler() {
     kernel::timer::tick();
     kernel::sched::Scheduler::tick_update();
+    #[cfg(feature = "async_rt")]
+    kernel::sched::async_rt::tick_update();
     if kernel::sched::Scheduler::schedule() {
         super::context::yield_cpu();
     }

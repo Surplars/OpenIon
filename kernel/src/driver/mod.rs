@@ -1,8 +1,12 @@
 pub mod block;
 pub mod char;
+pub mod framebuffer;
+pub mod gpio;
 pub mod manager;
 pub mod net;
 pub mod pool;
+pub mod rng;
+pub mod terminal;
 
 pub use pool::StaticDriverPool;
 
@@ -90,6 +94,7 @@ impl DeviceConfig for GenericDeviceConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceState {
     Uninitialized = 0,
     Ready = 1,
@@ -134,6 +139,30 @@ pub trait Driver: Send + Sync {
     /// VFS uses this to discover mountable storage. Drivers are stored in
     /// static pools, so the reference is valid for the kernel lifetime.
     fn as_block_device(&self) -> Option<&'static block::DynBlockDevice> {
+        None
+    }
+
+    fn as_char_device(&self) -> Option<&'static char::DynCharDevice> {
+        None
+    }
+
+    fn as_terminal_device(&self) -> Option<&'static terminal::DynTerminalDevice> {
+        None
+    }
+
+    fn as_gpio_controller(&self) -> Option<&'static gpio::DynGpioController> {
+        None
+    }
+
+    fn as_framebuffer_device(&self) -> Option<&'static framebuffer::DynFramebufferDevice> {
+        None
+    }
+
+    fn as_net_device(&self) -> Option<&'static net::DynNetDevice> {
+        None
+    }
+
+    fn as_rng_device(&self) -> Option<&'static rng::DynRngDevice> {
         None
     }
 }

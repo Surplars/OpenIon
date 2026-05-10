@@ -1,5 +1,8 @@
+#[cfg(feature = "async_rt")]
+pub mod async_rt;
 pub mod ready_queue;
 pub mod task;
+pub mod wait;
 
 use crate::mm::slab::Slab;
 use crate::sync::Mutex;
@@ -9,8 +12,13 @@ use task::{Priority, TaskControlBlock, TaskId, TaskState};
 
 static SCHEDULER: Mutex<Option<Scheduler>> = Mutex::new(None);
 
-pub static TCB_POOL: Slab<TaskControlBlock, 32> = Slab::new();
-pub const TASK_SNAPSHOT_CAP: usize = 32;
+#[cfg(feature = "mcu_profile")]
+const TASK_CAP: usize = 8;
+#[cfg(not(feature = "mcu_profile"))]
+const TASK_CAP: usize = crate::generated_config::OPENION_TASK_CAP;
+
+pub static TCB_POOL: Slab<TaskControlBlock, TASK_CAP> = Slab::new();
+pub const TASK_SNAPSHOT_CAP: usize = TASK_CAP;
 
 // Accessed from assembly context-switch code via #[no_mangle] symbols.
 // Safety: only written with IRQs disabled + SCHEDULER lock held.
@@ -257,6 +265,86 @@ impl Scheduler {
         }
     }
 
+    pub fn terminate_current() -> bool {
+        crate::arch::disable_irq();
+        let terminated = {
+            let mut lock = SCHEDULER.lock();
+            if let Some(sched) = lock.as_mut() {
+                let current = unsafe { CURRENT_TCB };
+                if current.is_null() {
+                    false
+                } else {
+                    let task = unsafe { &mut *current };
+                    task.state = TaskState::Terminated;
+                    task.next = core::ptr::null_mut();
+                    sched.schedule_locked()
+                }
+            } else {
+                false
+            }
+        };
+        crate::arch::enable_irq();
+        terminated
+    }
+
+    pub(crate) fn current_task_ptr() -> *mut TaskControlBlock {
+        unsafe { CURRENT_TCB }
+    }
+
+    pub(crate) fn block_current_task_irq_disabled() -> bool {
+        let _lock = SCHEDULER.lock();
+        let current = unsafe { CURRENT_TCB };
+        if current.is_null() {
+            false
+        } else {
+            let task = unsafe { &mut *current };
+            if task.state == TaskState::Running {
+                task.state = TaskState::Blocked;
+                task.wakeup_tick = 0;
+                task.next = core::ptr::null_mut();
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    pub(crate) fn wake_blocked_task(task: *mut TaskControlBlock) -> bool {
+        if task.is_null() {
+            return false;
+        }
+
+        crate::arch::disable_irq();
+        let woke = {
+            let mut lock = SCHEDULER.lock();
+            if let Some(sched) = lock.as_mut() {
+                let task = unsafe { &mut *task };
+                if task.state == TaskState::Blocked {
+                    task.state = TaskState::Ready;
+                    task.wakeup_tick = 0;
+                    task.next = core::ptr::null_mut();
+                    if sched.ready_queue.push(task) {
+                        sched.request_preempt_for(task.priority);
+                        true
+                    } else {
+                        task.state = TaskState::Blocked;
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        crate::arch::enable_irq();
+
+        if woke {
+            Self::yield_if_preempt_pending();
+        }
+        woke
+    }
+
     pub fn yield_task() {
         #[cfg(target_arch = "arm")]
         {
@@ -418,12 +506,20 @@ impl Scheduler {
     }
 }
 
-static mut IDLE_TASK_STACK: [usize; 256] = [0; 256];
-static mut ROOT_TASK_STACK: [usize; 1024] = [0; 1024];
+#[cfg(feature = "mcu_profile")]
+static mut IDLE_TASK_STACK: [usize; 128] = [0; 128];
+#[cfg(not(feature = "mcu_profile"))]
+static mut IDLE_TASK_STACK: [usize; crate::generated_config::OPENION_IDLE_STACK_WORDS] =
+    [0; crate::generated_config::OPENION_IDLE_STACK_WORDS];
+#[cfg(feature = "mcu_profile")]
+static mut ROOT_TASK_STACK: [usize; 512] = [0; 512];
+#[cfg(not(feature = "mcu_profile"))]
+static mut ROOT_TASK_STACK: [usize; crate::generated_config::OPENION_ROOT_STACK_WORDS] =
+    [0; crate::generated_config::OPENION_ROOT_STACK_WORDS];
 
 fn idle_task_entry() -> ! {
     loop {
-        core::hint::spin_loop();
+        crate::arch::idle_hint();
     }
 }
 

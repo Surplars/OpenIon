@@ -13,12 +13,20 @@ bench = false
 app = { path = "../../app", default-features = false }
 arch = { path = "../../arch", default-features = false }
 kernel = { path = "../../kernel", default-features = false }
-ns16550a = { path = "../../drivers/ns16550a" }
-virtio_blk = { path = "../../drivers/virtio_blk" }
+ns16550a = { path = "../../drivers/ns16550a", optional = true }
+virtio_blk = { path = "../../drivers/virtio_blk", optional = true }
+virtio_gpu = { path = "../../drivers/virtio_gpu", optional = true }
+virtio_rng = { path = "../../drivers/virtio_rng", optional = true }
 spin = "0.10.0"
 
 [features]
 default = ["s-mode", "builtin_shell"]
+async_rt = ["app/async_rt", "arch/async_rt"]
 builtin_shell = ["app/builtin_shell"]
+hypervisor = ["arch/hypervisor", "kernel/hypervisor"]
+driver_ns16550a = ["dep:ns16550a"]
+driver_virtio_blk = ["dep:virtio_blk"]
+driver_virtio_gpu = ["dep:virtio_gpu"]
+driver_virtio_rng = ["dep:virtio_rng"]
 m-mode = ["arch/m-mode"]
 s-mode = ["arch/s-mode"]

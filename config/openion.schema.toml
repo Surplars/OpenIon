@@ -1,64 +1,180 @@
 # OpenIon kernel configuration schema for Ionix.
 
 [[menus]]
-name = "Build Target"
-key = "BUILD"
-help = "Host build and Cargo target selection."
+name = "Kernel"
+key = "KERNEL"
+help = "Platform-neutral kernel facilities and policies."
 visible = true
-
-[[menus.items]]
-name = "Platform"
-key = "OPENION_PLATFORM"
-type = "string"
-default = "qemu-virt-riscv"
-help = "Platform crate to build. Supported: qemu-virt-riscv, qemu-an521."
-rebuild = true
-
-[[menus.items]]
-name = "Cargo Target Triple"
-key = "OPENION_TARGET"
-type = "string"
-default = "riscv64imac-unknown-none-elf"
-help = "Rust target triple passed to cargo."
-rebuild = true
-
-[[menus.items]]
-name = "RISC-V S-mode"
-key = "OPENION_RISCV_S_MODE"
-type = "bool"
-default = true
-help = "Build the RISC-V platform in Supervisor mode on SBI firmware."
-rebuild = true
-
-[[menus.items]]
-name = "RISC-V M-mode"
-key = "OPENION_RISCV_M_MODE"
-type = "bool"
-default = false
-help = "Build the RISC-V platform in Machine mode. Experimental for this tree."
-rebuild = true
-
-[[menus.items]]
-name = "Network Backend"
-key = "OPENION_NET_BACKEND"
-type = "string"
-default = "ionnet"
-help = "Kernel network backend. Supported: ionnet, smoltcp."
-rebuild = true
 
 [[menus]]
-name = "Kernel Core"
-key = "KERNEL"
-help = "Platform-neutral kernel core parameters."
+name = "Scheduler Core"
+key = "KERNEL_SCHED"
+parent = "KERNEL"
+help = "Core scheduler policy: timer cadence and fixed task storage."
 visible = true
 
 [[menus.items]]
-name = "Scheduler Tick Rate"
+name = "System Tick Rate"
 key = "OPENION_SYSTICK_HZ"
 type = "u32"
 default = 1000
-help = "Kernel tick frequency in Hz."
+help = "Kernel scheduler tick frequency in Hz. Platforms decide how this maps to hardware timers."
 rebuild = true
+
+[[menus.items]]
+name = "Task Slots"
+key = "OPENION_TASK_CAP"
+type = "usize"
+default = 32
+help = "Maximum number of scheduler task control blocks."
+rebuild = true
+
+[[menus]]
+name = "Task Stacks"
+key = "KERNEL_TASK_STACKS"
+parent = "KERNEL_SCHED"
+help = "Built-in kernel task stack capacities."
+visible = true
+
+[[menus.items]]
+name = "Root Stack Words"
+key = "OPENION_ROOT_STACK_WORDS"
+type = "usize"
+default = 1024
+help = "Root task stack capacity measured in machine words."
+rebuild = true
+
+[[menus.items]]
+name = "Idle Stack Words"
+key = "OPENION_IDLE_STACK_WORDS"
+type = "usize"
+default = 256
+help = "Idle task stack capacity measured in machine words."
+rebuild = true
+
+[[menus]]
+name = "Async Executor"
+key = "KERNEL_ASYNC"
+parent = "KERNEL_SCHED"
+help = "Optional Rust Future executor layered on the RTOS scheduler."
+visible = true
+
+[[menus.items]]
+name = "Enable Async Executor"
+key = "OPENION_ASYNC_RT"
+type = "bool"
+default = true
+help = "Enable the cooperative Rust Future executor running on top of the RTOS scheduler."
+rebuild = true
+
+[[menus.items]]
+name = "Executor Task Slots"
+key = "OPENION_ASYNC_TASK_SLOTS"
+type = "usize"
+default = 8
+depends_on = ["OPENION_ASYNC_RT"]
+help = "Fixed number of async task slots managed by the kernel executor."
+rebuild = true
+
+[[menus]]
+name = "Memory"
+key = "KERNEL_MEMORY"
+parent = "KERNEL"
+help = "Kernel heap and fixed-capacity memory pools."
+visible = true
+
+[[menus.items]]
+name = "Kernel Heap Size"
+key = "OPENION_KERNEL_HEAP_SIZE"
+type = "usize"
+default = 65536
+help = "Static kernel heap size in bytes."
+rebuild = true
+
+[[menus]]
+name = "VFS"
+key = "KERNEL_VFS"
+parent = "KERNEL"
+help = "RAMFS and mount/VFS capacity settings."
+visible = true
+
+[[menus.items]]
+name = "RAMFS Node Capacity"
+key = "OPENION_RAMFS_NODE_CAP"
+type = "usize"
+default = 64
+help = "Maximum number of RAMFS vnode objects."
+rebuild = true
+
+[[menus.items]]
+name = "RAMFS File Size"
+key = "OPENION_RAMFS_FILE_MAX_SIZE"
+type = "usize"
+default = 4096
+help = "Maximum inline bytes stored by one RAMFS file node."
+rebuild = true
+
+[[menus]]
+name = "Shell"
+key = "KERNEL_SHELL"
+parent = "KERNEL"
+help = "Built-in interactive shell options."
+visible = true
+
+[[menus.items]]
+name = "Built-in Shell"
+key = "OPENION_BUILTIN_SHELL"
+type = "bool"
+default = true
+help = "Enable the built-in interactive shell task."
+rebuild = true
+
+[[menus.items]]
+name = "Shell Stack Size"
+key = "OPENION_SHELL_STACK_SIZE"
+type = "usize"
+default = 32768
+depends_on = ["OPENION_BUILTIN_SHELL"]
+help = "Stack size in bytes for the built-in shell task."
+rebuild = true
+
+[[menus]]
+name = "Platform Interface"
+key = "KERNEL_PLATFORM"
+parent = "KERNEL"
+help = "Kernel interfaces used by platform and board code."
+visible = true
+
+[[menus]]
+name = "Device Tree"
+key = "KERNEL_FDT"
+parent = "KERNEL_PLATFORM"
+help = "Flattened Device Tree parsing and driver auto-probing."
+visible = true
+
+[[menus.items]]
+name = "FDT Support"
+key = "OPENION_FDT"
+type = "bool"
+default = true
+help = "Enable generic flattened device tree parsing support."
+rebuild = true
+
+[[menus.items]]
+name = "FDT Auto Probe"
+key = "OPENION_FDT_AUTO_PROBE"
+type = "bool"
+default = true
+depends_on = ["OPENION_FDT"]
+help = "Scan FDT and instantiate matching driver factories during boot."
+rebuild = true
+
+[[menus]]
+name = "IRQ"
+key = "KERNEL_IRQ"
+parent = "KERNEL_PLATFORM"
+help = "Generic IRQ table configuration."
+visible = true
 
 [[menus.items]]
 name = "External IRQ Count"
@@ -68,158 +184,265 @@ default = 64
 help = "Size of the generic IRQ handler table."
 rebuild = true
 
-[[menus.items]]
-name = "Enable Built-in Shell"
-key = "OPENION_BUILTIN_SHELL"
-type = "bool"
-default = true
-help = "Enable the built-in interactive shell."
-rebuild = true
-
-[[menus.items]]
-name = "Enable FDT Auto Probe"
-key = "OPENION_FDT_AUTO_PROBE"
-type = "bool"
-default = true
-help = "Scan FDT and instantiate matching driver factories during boot."
-rebuild = true
+[[menus]]
+name = "Architecture"
+key = "ARCH"
+help = "Architecture-level build options. Board policy still belongs in platform crates."
+visible = true
 
 [[menus]]
-name = "RISC-V QEMU virt"
-key = "QEMU_VIRT_RISCV"
-help = "QEMU virt board constants."
+name = "RISC-V"
+key = "ARCH_RISCV"
+parent = "ARCH"
+help = "RISC-V privilege mode, ISA extension toggles, and experimental H-extension options."
 visible = true
 
 [[menus.items]]
-name = "CPU Frequency"
-key = "OPENION_QEMU_VIRT_RISCV_CPU_HZ"
-type = "u32"
-default = 10000000
-help = "RISC-V QEMU virt timer frequency in Hz."
+name = "RISC-V S-mode"
+key = "OPENION_RISCV_S_MODE"
+type = "bool"
+default = true
+conflicts_with = ["OPENION_RISCV_M_MODE"]
+help = "Build RISC-V code for Supervisor mode on SBI firmware."
 rebuild = true
 
 [[menus.items]]
-name = "Memory Base"
-key = "OPENION_QEMU_VIRT_RISCV_MEMORY_BASE"
-type = "usize"
-default = "0x8000_0000"
-help = "RISC-V QEMU virt RAM base."
-rebuild = true
-
-[[menus.items]]
-name = "Memory Size"
-key = "OPENION_QEMU_VIRT_RISCV_MEMORY_SIZE"
-type = "usize"
-default = 134217728
-help = "RISC-V QEMU virt RAM size in bytes."
-rebuild = true
-
-[[menus.items]]
-name = "Default DTB Address"
-key = "OPENION_QEMU_VIRT_RISCV_DTB_ADDR"
-type = "usize"
-default = "0x8006_8000"
-help = "Fallback DTB physical address if firmware does not pass one."
-rebuild = true
-
-[[menus.items]]
-name = "UART0 Base"
-key = "OPENION_QEMU_VIRT_RISCV_UART0_BASE"
-type = "usize"
-default = "0x1000_0000"
-help = "NS16550A UART0 MMIO base."
-rebuild = true
-
-[[menus.items]]
-name = "UART0 IRQ"
-key = "OPENION_QEMU_VIRT_RISCV_UART0_IRQ"
-type = "u32"
-default = 10
-help = "NS16550A UART0 PLIC IRQ."
-rebuild = true
-
-[[menus.items]]
-name = "VirtIO Block IRQ"
-key = "OPENION_QEMU_VIRT_RISCV_VIRTIO_BLK_IRQ"
-type = "u32"
-default = 1
-help = "VirtIO block PLIC IRQ for the default QEMU device."
-rebuild = true
-
-[[menus.items]]
-name = "PLIC Base"
-key = "OPENION_QEMU_VIRT_RISCV_PLIC_BASE"
-type = "usize"
-default = "0x0c00_0000"
-help = "QEMU virt PLIC MMIO base."
-rebuild = true
-
-[[menus.items]]
-name = "CLINT Base"
-key = "OPENION_QEMU_VIRT_RISCV_CLINT_BASE"
-type = "usize"
-default = "0x0200_0000"
-help = "QEMU virt CLINT MMIO base."
+name = "RISC-V M-mode"
+key = "OPENION_RISCV_M_MODE"
+type = "bool"
+default = false
+conflicts_with = ["OPENION_RISCV_S_MODE"]
+help = "Build RISC-V code for Machine mode. Experimental for this tree."
 rebuild = true
 
 [[menus]]
-name = "ARM QEMU AN521"
-key = "QEMU_AN521"
-help = "QEMU AN521 board constants."
+name = "ISA Extensions"
+key = "ARCH_RISCV_ISA"
+parent = "ARCH_RISCV"
+help = "RISC-V target-feature switches passed to rustc for qemu-virt-riscv builds."
 visible = true
 
 [[menus.items]]
-name = "CPU Frequency"
-key = "OPENION_QEMU_AN521_CPU_HZ"
-type = "u32"
-default = 25000000
-help = "AN521 CPU clock in Hz."
+name = "M: Integer Multiply/Divide"
+key = "OPENION_RISCV_EXT_M"
+type = "bool"
+default = true
+help = "Enable the RISC-V M extension. Disabling this builds closer to RV64IA/RV64IAC and may expose compiler/runtime assumptions."
 rebuild = true
 
 [[menus.items]]
-name = "Memory Base"
-key = "OPENION_QEMU_AN521_MEMORY_BASE"
+name = "A: Atomic Instructions"
+key = "OPENION_RISCV_EXT_A"
+type = "bool"
+default = true
+help = "Enable the RISC-V A extension for native atomic instructions."
+rebuild = true
+
+[[menus.items]]
+name = "C: Compressed Instructions"
+key = "OPENION_RISCV_EXT_C"
+type = "bool"
+default = true
+help = "Enable the compressed instruction set extension. Disable this to build RISC-V code with IMA only."
+rebuild = true
+
+[[menus.items]]
+name = "F: Single-Precision Floating Point"
+key = "OPENION_RISCV_EXT_F"
+type = "bool"
+default = false
+help = "Enable the RISC-V F extension for compiler-generated single-precision floating-point instructions. Kernel FPU context handling is not part of the stable path."
+rebuild = true
+
+[[menus.items]]
+name = "D: Double-Precision Floating Point"
+key = "OPENION_RISCV_EXT_D"
+type = "bool"
+default = false
+depends_on = ["OPENION_RISCV_EXT_F"]
+help = "Enable the RISC-V D extension. This requires F and should remain off unless FPU state handling is being validated."
+rebuild = true
+
+[[menus.items]]
+name = "B: Bit-Manipulation Bundle"
+key = "OPENION_RISCV_EXT_B"
+type = "bool"
+default = false
+help = "Enable the LLVM/Rust B bundle, covering the common Zba, Zbb, and Zbs bit-manipulation extensions."
+rebuild = true
+
+[[menus.items]]
+name = "V: Vector Extension"
+key = "OPENION_RISCV_EXT_V"
+type = "bool"
+default = false
+help = "Enable the RISC-V V extension for vector code generation. Leave off unless vector state save/restore is being worked on."
+rebuild = true
+
+[[menus.items]]
+name = "Zicsr: CSR Instructions"
+key = "OPENION_RISCV_EXT_ZICSR"
+type = "bool"
+default = true
+help = "Enable the separated Zicsr extension for CSR instructions."
+rebuild = true
+
+[[menus.items]]
+name = "Zifencei: Instruction-Fetch Fence"
+key = "OPENION_RISCV_EXT_ZIFENCEI"
+type = "bool"
+default = true
+help = "Enable the separated Zifencei extension for fence.i."
+rebuild = true
+
+[[menus.items]]
+name = "RISC-V Hypervisor"
+key = "OPENION_RISCV_HYPERVISOR"
+type = "bool"
+default = false
+help = "Compile experimental RISC-V H-extension hypervisor support. This does not make it the default boot path."
+rebuild = true
+
+[[menus]]
+name = "Drivers"
+key = "DRIVERS"
+help = "Driver implementation selection grouped by device class."
+visible = true
+
+[[menus]]
+name = "Serial"
+key = "DRIVERS_SERIAL"
+parent = "DRIVERS"
+help = "UART and USART driver implementations."
+visible = true
+
+[[menus.items]]
+name = "NS16550A UART Driver"
+key = "OPENION_DRIVER_NS16550A"
+type = "bool"
+default = true
+help = "Enable the NS16550A UART driver crate for platforms that instantiate it."
+rebuild = true
+
+[[menus.items]]
+name = "CMSDK UART Driver"
+key = "OPENION_DRIVER_CMSDK_UART"
+type = "bool"
+default = true
+help = "Enable the CMSDK UART driver crate for ARM MPS2-style platforms."
+rebuild = true
+
+[[menus.items]]
+name = "STM32L4x5 USART Driver"
+key = "OPENION_DRIVER_STM32L4X5_USART"
+type = "bool"
+default = true
+help = "Enable the STM32L4x5 USART driver crate for QEMU STM32L475 and STM32L4-style platforms."
+rebuild = true
+
+[[menus]]
+name = "VirtIO Transport"
+key = "DRIVERS_VIRTIO"
+parent = "DRIVERS"
+help = "VirtIO MMIO transport options shared by VirtIO device drivers."
+visible = true
+
+[[menus.items]]
+name = "Allow Legacy VirtIO MMIO"
+key = "OPENION_VIRTIO_MMIO_LEGACY"
+type = "bool"
+default = false
+help = "Allow legacy VirtIO MMIO devices. Modern VERSION_1 devices remain preferred."
+rebuild = true
+
+[[menus]]
+name = "Block Devices"
+key = "DRIVERS_BLOCK"
+parent = "DRIVERS"
+help = "Block storage driver implementations."
+visible = true
+
+[[menus.items]]
+name = "VirtIO MMIO Block Driver"
+key = "OPENION_DRIVER_VIRTIO_BLK"
+type = "bool"
+default = true
+help = "Enable the VirtIO MMIO block driver."
+rebuild = true
+
+[[menus.items]]
+name = "VirtIO Block Poll Limit"
+key = "OPENION_VIRTIO_BLK_POLL_LIMIT"
 type = "usize"
-default = "0x8000_0000"
-help = "AN521 RAM base."
+default = 2000000
+depends_on = ["OPENION_DRIVER_VIRTIO_BLK"]
+help = "Maximum polling iterations for one synchronous VirtIO block request before returning an error."
+rebuild = true
+
+[[menus]]
+name = "Display Devices"
+key = "DRIVERS_DISPLAY"
+parent = "DRIVERS"
+help = "Framebuffer and display driver implementations."
+visible = true
+
+[[menus.items]]
+name = "VirtIO MMIO GPU Driver"
+key = "OPENION_DRIVER_VIRTIO_GPU"
+type = "bool"
+default = true
+help = "Enable the VirtIO MMIO GPU driver and expose it as a framebuffer device."
 rebuild = true
 
 [[menus.items]]
-name = "Memory Size"
-key = "OPENION_QEMU_AN521_MEMORY_SIZE"
+name = "VirtIO GPU Poll Limit"
+key = "OPENION_VIRTIO_GPU_POLL_LIMIT"
 type = "usize"
-default = 16777216
-help = "AN521 RAM size in bytes."
+default = 2000000
+depends_on = ["OPENION_DRIVER_VIRTIO_GPU"]
+help = "Maximum polling iterations for one synchronous VirtIO GPU control request before returning an error."
 rebuild = true
 
-[[menus.items]]
-name = "UART Base"
-key = "OPENION_QEMU_AN521_UART_BASE"
-type = "usize"
-default = "0x4020_0000"
-help = "CMSDK UART MMIO base."
-rebuild = true
+[[menus]]
+name = "Entropy Devices"
+key = "DRIVERS_ENTROPY"
+parent = "DRIVERS"
+help = "Random number and entropy device implementations."
+visible = true
 
 [[menus.items]]
-name = "UART IRQ"
-key = "OPENION_QEMU_AN521_UART_IRQ"
-type = "u32"
-default = 0
-help = "CMSDK UART IRQ number."
+name = "VirtIO MMIO RNG Driver"
+key = "OPENION_DRIVER_VIRTIO_RNG"
+type = "bool"
+default = true
+help = "Enable the VirtIO MMIO entropy driver for platforms that expose virtio-rng devices."
 rebuild = true
 
-[[menus.items]]
-name = "LAN9118 Base"
-key = "OPENION_QEMU_AN521_LAN9118_BASE"
-type = "usize"
-default = "0x4200_0000"
-help = "LAN9118 MMIO base."
-rebuild = true
+[[menus]]
+name = "Network Devices"
+key = "DRIVERS_NET"
+parent = "DRIVERS"
+help = "Network device driver implementations."
+visible = true
 
 [[menus.items]]
-name = "LAN9118 IRQ"
-key = "OPENION_QEMU_AN521_LAN9118_IRQ"
-type = "u32"
-default = 48
-help = "LAN9118 IRQ number."
+name = "LAN9118 Ethernet Driver"
+key = "OPENION_DRIVER_LAN9118"
+type = "bool"
+default = true
+help = "Enable the LAN9118 Ethernet driver."
+rebuild = true
+
+[[menus]]
+name = "Networking"
+key = "NETWORK"
+help = "Kernel network stack selection."
+visible = true
+
+[[menus.items]]
+name = "Network Backend"
+key = "OPENION_NET_BACKEND"
+type = "string"
+default = "ionnet"
+help = "Kernel network backend. Supported: ionnet, smoltcp."
 rebuild = true

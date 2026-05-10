@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use kernel::mm::addr::PhysAddr;
 use kernel::mm::{MemPerms, MmError};
 

@@ -16,8 +16,10 @@ make config
 make menuconfig
 make build PLAT=qemu-virt-riscv
 make build PLAT=qemu-an521
+make build PLAT=qemu-stm32l475
 make run   PLAT=qemu-virt-riscv
 make run   PLAT=qemu-an521
+make run   PLAT=qemu-stm32l475
 ```
 
 - Never use `make run` in agent sessions. QEMU blocks the terminal and may not
@@ -42,8 +44,10 @@ make run   PLAT=qemu-an521
 | `app` | `app/` | Root task and shell |
 | `qemu-virt-riscv` | `platform/qemu-virt-riscv/` | RISC-V 64 platform binary |
 | `an521` | `platform/qemu-an521/` | ARM Cortex-M33 platform binary |
+| `qemu-stm32l475` | `platform/qemu-stm32l475/` | STM32L475 QEMU platform binary |
 | `ns16550a` | `drivers/ns16550a/` | NS16550A UART driver |
 | `cmsdk_uart` | `drivers/cmsdk_uart/` | CMSDK UART driver |
+| `stm32l4x5_usart` | `drivers/stm32l4x5_usart/` | STM32L4x5 USART driver |
 | `lan9118` | `drivers/lan9118/` | LAN9118 Ethernet driver |
 | `virtio_blk` | `drivers/virtio_blk/` | VirtIO MMIO block driver |
 | `bootloader` | `bootloader/` | Placeholder |
@@ -133,12 +137,22 @@ for the SBI jump target.
 - Handlers call `kernel::irq::handle_irq(N)`, which dispatches the registered
   IRQ table entry.
 
+### STM32 `qemu-stm32l475`
+
+- Targets QEMU machine `b-l475e-iot01a` with target triple
+  `thumbv7m-none-eabi`.
+- Uses the `mcu_profile` Cargo feature to shrink fixed-capacity kernel storage.
+- Platform code owns RCC, GPIO pinmux, linker script, startup vector, and NVIC
+  wiring. USART protocol implementation lives in `drivers/stm32l4x5_usart`.
+- QEMU STM32 peripheral coverage is partial. Treat this platform as a build and
+  portability smoke test until runtime shell I/O is manually validated.
+
 ## Driver Framework Rules
 
 - Every driver lives in its own crate under `drivers/`.
 - Drivers implement `kernel::driver::Driver`.
-- Character, block, and network drivers additionally implement the matching
-  device class trait.
+- Character, terminal, GPIO, block, and network drivers additionally implement
+  the matching device class trait.
 - FDT-probed drivers implement `DriverFactory`.
 - `DriverFactory::probe()` accepts `DeviceResource`; do not add new probe APIs
   that pass raw `base_addr, irq` pairs.

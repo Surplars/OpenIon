@@ -10,7 +10,10 @@ pub use tlsf::{GlobalTlsfAlloc, HeapStats};
 use crate::sync::Mutex;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-const KERNEL_HEAP_SIZE: usize = 64 * 1024;
+#[cfg(feature = "mcu_profile")]
+const KERNEL_HEAP_SIZE: usize = 8 * 1024;
+#[cfg(not(feature = "mcu_profile"))]
+const KERNEL_HEAP_SIZE: usize = crate::generated_config::OPENION_KERNEL_HEAP_SIZE;
 
 #[repr(align(16))]
 struct HeapStorage([u8; KERNEL_HEAP_SIZE]);

@@ -1,3 +1,4 @@
+pub mod demo;
 pub mod entry;
 pub mod gstage;
 pub mod sbi;
@@ -12,6 +13,48 @@ pub use entry::{guest_run, handle_vm_exit};
 pub use gstage::GStagePageTable;
 
 use core::arch::asm;
+
+#[derive(Clone, Copy)]
+pub struct HypervisorCapability {
+    pub compiled: bool,
+    pub h_extension: bool,
+}
+
+pub fn capability() -> HypervisorCapability {
+    HypervisorCapability {
+        compiled: true,
+        h_extension: has_h_extension(),
+    }
+}
+
+pub fn init_kernel_state() {
+    let cap = capability();
+    kernel::hv::init(cap.compiled, cap.h_extension);
+}
+
+fn has_h_extension() -> bool {
+    #[cfg(all(
+        feature = "m-mode",
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    {
+        // misa bit 7 is the standard H extension. This probe is only safe in
+        // M-mode; S/HS-mode firmware may not allow reading misa.
+        let misa: usize;
+        unsafe {
+            asm!("csrr {}, misa", out(reg) misa);
+        }
+        misa & (1usize << 7) != 0
+    }
+
+    #[cfg(not(all(
+        feature = "m-mode",
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    )))]
+    {
+        false
+    }
+}
 
 /// RISC-V H-extension vCPU context.
 ///

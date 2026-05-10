@@ -13,6 +13,7 @@ unsafe extern "C" {
 pub extern "C" fn handle_vm_exit(vcpu: *mut VCpuContext, scause: usize, stval: usize) -> usize {
     let ctx = unsafe { &mut *vcpu };
     ctx.vstval = stval;
+    kernel::hv::record_exit(exit_kind(scause), scause, stval);
 
     // Check if this is an interrupt (highest bit set)
     if scause & (1 << (usize::BITS - 1)) != 0 {
@@ -20,6 +21,19 @@ pub extern "C" fn handle_vm_exit(vcpu: *mut VCpuContext, scause: usize, stval: u
         handle_interrupt(ctx, irq)
     } else {
         handle_exception(ctx, scause, stval)
+    }
+}
+
+fn exit_kind(scause: usize) -> kernel::hv::HvExitKind {
+    if scause & (1 << (usize::BITS - 1)) != 0 {
+        return kernel::hv::HvExitKind::Interrupt;
+    }
+
+    match scause {
+        8 => kernel::hv::HvExitKind::Ecall,
+        2 => kernel::hv::HvExitKind::IllegalInstruction,
+        12 | 13 | 15 => kernel::hv::HvExitKind::PageFault,
+        _ => kernel::hv::HvExitKind::Unsupported,
     }
 }
 

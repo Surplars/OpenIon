@@ -14,6 +14,21 @@ pub trait Platform {
     fn config() -> PlatformConfig;
     fn early_init();
 
+    /// Install the earliest console and CPU identity providers.
+    fn init_console() {}
+
+    /// Discover board resources needed before core kernel services start.
+    fn discover_early_devices() {}
+
+    /// Register FDT driver factories before generic auto-probing runs.
+    fn register_driver_factories() {}
+
+    /// Initialize platform interrupt controllers after the kernel IRQ table exists.
+    fn init_irqs() {}
+
+    /// Initialize the platform timer after the kernel timer core exists.
+    fn init_timer() {}
+
     fn drivers() -> &'static [&'static dyn crate::driver::manager::AnyDriver] {
         &[]
     }

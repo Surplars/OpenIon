@@ -3,7 +3,7 @@
 pub mod register;
 
 use kernel::driver::manager::AnyDriver;
-use kernel::driver::net::{MacAddress, NetDevice};
+use kernel::driver::net::{DynNetDevice, MacAddress, NetDevice};
 use kernel::driver::{
     DeviceConfig, DeviceResource, Driver, DriverFactory, DriverResult, GenericDeviceConfig,
     StaticDriverPool,
@@ -94,6 +94,11 @@ impl Driver for Lan9118 {
     fn handle_irq(&self, _irq_id: u32) -> bool {
         // Clear interrupts if we handle them
         false
+    }
+
+    fn as_net_device(&self) -> Option<&'static DynNetDevice> {
+        let dev: &DynNetDevice = self;
+        Some(unsafe { core::mem::transmute::<&DynNetDevice, &'static DynNetDevice>(dev) })
     }
 }
 

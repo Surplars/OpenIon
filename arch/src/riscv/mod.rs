@@ -1,6 +1,9 @@
+pub mod clint;
 pub mod context;
+#[cfg(feature = "hypervisor")]
 pub mod hypervisor;
 pub mod irq;
+pub mod plic;
 pub mod pmp;
 pub mod sbi;
 pub mod sv39;
@@ -36,6 +39,12 @@ impl kernel::arch::Arch for RiscvArch {
 
     fn yield_cpu() {
         context::yield_cpu();
+    }
+
+    fn idle_hint() {
+        unsafe {
+            core::arch::asm!("wfi", options(nomem, nostack, preserves_flags));
+        }
     }
 
     fn start_first_task() -> ! {

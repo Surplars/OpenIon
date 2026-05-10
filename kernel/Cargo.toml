@@ -10,7 +10,10 @@ bench = false
 
 [features]
 default = []
+async_rt = []
 builtin_shell = []
+hypervisor = []
+mcu_profile = []
 use_smoltcp = ["dep:smoltcp"]
 use_ionnet = []
 

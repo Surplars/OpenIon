@@ -862,6 +862,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ionsoc-verilator"
+version = "0.1.0"
+dependencies = [
+ "app",
+ "arch",
+ "kernel",
+ "ns16550a",
+ "spin",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1331,6 +1342,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "qemu-stm32l475"
+version = "0.1.0"
+dependencies = [
+ "app",
+ "arch",
+ "kernel",
+ "stm32l4x5_usart",
+]
+
+[[package]]
 name = "qemu-virt-riscv"
 version = "0.1.0"
 dependencies = [
@@ -1340,6 +1361,8 @@ dependencies = [
  "ns16550a",
  "spin",
  "virtio_blk",
+ "virtio_gpu",
+ "virtio_rng",
 ]
 
 [[package]]
@@ -1767,6 +1790,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stm32l4x5_usart"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2088,6 +2118,27 @@ name = "virtio_blk"
 version = "0.1.0"
 dependencies = [
  "kernel",
+ "virtio_common",
+]
+
+[[package]]
+name = "virtio_common"
+version = "0.1.0"
+
+[[package]]
+name = "virtio_gpu"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+ "virtio_common",
+]
+
+[[package]]
+name = "virtio_rng"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+ "virtio_common",
 ]
 
 [[package]]

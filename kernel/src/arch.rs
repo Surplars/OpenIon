@@ -6,6 +6,8 @@ pub trait Arch {
 
     fn yield_cpu();
 
+    fn idle_hint();
+
     fn start_first_task() -> !;
 }
 
@@ -13,6 +15,7 @@ pub static mut DISABLE_IRQ_FN: Option<fn()> = None;
 pub static mut ENABLE_IRQ_FN: Option<fn()> = None;
 pub static mut INIT_TASK_STACK_FN: Option<fn(&mut [usize], usize) -> usize> = None;
 pub static mut YIELD_CPU_FN: Option<fn()> = None;
+pub static mut IDLE_HINT_FN: Option<fn()> = None;
 pub static mut EXTERNAL_IRQ_HANDLER: Option<fn()> = None;
 
 pub fn init<A: Arch>() {
@@ -21,6 +24,7 @@ pub fn init<A: Arch>() {
         ENABLE_IRQ_FN = Some(A::enable_global_irq);
         INIT_TASK_STACK_FN = Some(A::init_task_stack);
         YIELD_CPU_FN = Some(A::yield_cpu);
+        IDLE_HINT_FN = Some(A::idle_hint);
     }
 }
 
@@ -46,6 +50,16 @@ pub fn enable_irq() {
             if let Some(f) = ENABLE_IRQ_FN {
                 f()
             }
+        }
+    }
+}
+
+pub fn idle_hint() {
+    unsafe {
+        if let Some(f) = IDLE_HINT_FN {
+            f()
+        } else {
+            core::hint::spin_loop();
         }
     }
 }

@@ -1,7 +1,6 @@
 #![no_std]
 
 use core::cell::UnsafeCell;
-use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicBool, Ordering, fence};
 
 use kernel::driver::block::BlockDevice;
@@ -10,77 +9,16 @@ use kernel::driver::{
     DeviceResource, Driver, DriverErr, DriverFactory, DriverResult, GenericDeviceConfig,
     StaticDriverPool,
 };
-
-// VirtIO MMIO register offsets
-const MAGIC: usize = 0x000;
-const VERSION: usize = 0x004;
-const DEVICE_ID: usize = 0x008;
-const STATUS: usize = 0x070;
-const DEVICE_FEATURES: usize = 0x010;
-const DRIVER_FEATURES: usize = 0x020;
-const QUEUE_SEL: usize = 0x030;
-const QUEUE_NUM_MAX: usize = 0x034;
-const QUEUE_NUM: usize = 0x038;
-const QUEUE_READY: usize = 0x044;
-const QUEUE_DESC_LOW: usize = 0x080;
-const QUEUE_DESC_HIGH: usize = 0x084;
-const QUEUE_DRIVER_LOW: usize = 0x090;
-const QUEUE_DRIVER_HIGH: usize = 0x094;
-const QUEUE_DEVICE_LOW: usize = 0x0a0;
-const QUEUE_DEVICE_HIGH: usize = 0x0a4;
-const QUEUE_NOTIFY: usize = 0x050;
-const INTERRUPT_STATUS: usize = 0x060;
-const INTERRUPT_ACK: usize = 0x064;
-
-// Status bits
-const STATUS_ACK: u32 = 1;
-const STATUS_DRIVER: u32 = 2;
-const STATUS_DRIVER_OK: u32 = 4;
-const STATUS_FEATURES_OK: u32 = 8;
-const STATUS_FAILED: u32 = 128;
-
-const DEVICE_FEATURES_SEL: usize = 0x014;
-const DRIVER_FEATURES_SEL: usize = 0x024;
-const VIRTIO_F_VERSION_1_BIT: u32 = 32;
+use virtio_common::{
+    DEVICE_ID_BLOCK, FeatureSet, MmioTransport, VirtqAvail, VirtqDesc, VirtqUsed, desc_flags,
+    status,
+};
 
 // VirtIO block device request types
 const VIRTIO_BLK_T_IN: u32 = 0;
-const VIRTIO_BLK_T_OUT: u32 = 1;
-
-// Descriptor flags
-const VIRTQ_DESC_F_NEXT: u16 = 1;
-const VIRTQ_DESC_F_WRITE: u16 = 2;
 
 const QUEUE_SIZE: usize = 16;
-const READ_SPIN_LIMIT: usize = 2_000_000;
-
-#[repr(C)]
-struct VirtqDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-}
-
-#[repr(C)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; QUEUE_SIZE],
-}
-
-#[repr(C)]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; QUEUE_SIZE],
-}
-
-#[repr(C)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
-}
+const QUEUE_INDEX: u32 = 0;
 
 #[repr(C)]
 struct BlkRequest {
@@ -94,11 +32,12 @@ struct BlkRequest {
 pub struct VirtioBlk {
     base_addr: usize,
     irq_num: u32,
+    transport: MmioTransport,
     capacity: u64,
     // Virtqueue memory (must be contiguous and aligned)
     desc: *mut VirtqDesc,
-    avail: *mut VirtqAvail,
-    used: *mut VirtqUsed,
+    avail: *mut VirtqAvail<QUEUE_SIZE>,
+    used: *mut VirtqUsed<QUEUE_SIZE>,
     request: *mut BlkRequest,
     free_head: u16,
     last_used_idx: UnsafeCell<u16>,
@@ -114,6 +53,7 @@ impl VirtioBlk {
         Self {
             base_addr,
             irq_num,
+            transport: MmioTransport::new(base_addr),
             capacity: 0,
             desc: core::ptr::null_mut(),
             avail: core::ptr::null_mut(),
@@ -125,73 +65,49 @@ impl VirtioBlk {
         }
     }
 
-    fn reg_read32(&self, offset: usize) -> u32 {
-        unsafe { read_volatile((self.base_addr + offset) as *const u32) }
-    }
-
-    fn reg_write32(&self, offset: usize, val: u32) {
-        unsafe { write_volatile((self.base_addr + offset) as *mut u32, val) }
-    }
-
-    fn reg_read64(&self, offset: usize) -> u64 {
-        let lo = self.reg_read32(offset) as u64;
-        let hi = self.reg_read32(offset + 4) as u64;
-        (hi << 32) | lo
-    }
-
     fn setup_queue(&mut self) -> bool {
-        self.reg_write32(QUEUE_SEL, 0);
-        let max = self.reg_read32(QUEUE_NUM_MAX);
-        if max == 0 || (max as usize) < QUEUE_SIZE {
-            return false;
-        }
-        self.reg_write32(QUEUE_NUM, QUEUE_SIZE as u32);
-
         // Allocate aligned memory for virtqueue structures + request buffer
         // Needs: desc(256) + avail(~36) + page_gap + used(~132) + request(529+align)
         // Worst case: 4095(align) + 4096 + 136 + 529 = 8856 bytes → use 12KB (3 pages)
         use core::cell::UnsafeCell;
-        struct QueueMem(UnsafeCell<[u8; 12288]>);
+        struct QueueMem(UnsafeCell<[u8; 16384]>);
         unsafe impl Sync for QueueMem {}
-        static QUEUE_MEM: QueueMem = QueueMem(UnsafeCell::new([0u8; 12288]));
+        static QUEUE_MEM: QueueMem = QueueMem(UnsafeCell::new([0u8; 16384]));
         let base = QUEUE_MEM.0.get() as usize;
         let aligned = (base + 4095) & !4095;
 
         self.desc = aligned as *mut VirtqDesc;
-        self.avail = (aligned + QUEUE_SIZE * 16) as *mut VirtqAvail;
-        self.used = (aligned + 4096) as *mut VirtqUsed;
+        self.avail = (aligned + QUEUE_SIZE * 16) as *mut VirtqAvail<QUEUE_SIZE>;
+        self.used = (aligned + 4096) as *mut VirtqUsed<QUEUE_SIZE>;
         // BlkRequest.sector is u64 (needs 8-byte align); VirtqUsed is 132 bytes (not 8-aligned)
-        let request_off = (core::mem::size_of::<VirtqUsed>() + 7) & !7;
+        let request_off = (core::mem::size_of::<VirtqUsed<QUEUE_SIZE>>() + 7) & !7;
         self.request = (aligned + 4096 + request_off) as *mut BlkRequest;
 
         // Zero out queue memory
         unsafe {
-            core::ptr::write_bytes(aligned as *mut u8, 0, 4096);
+            core::ptr::write_bytes(aligned as *mut u8, 0, 12288);
         }
 
-        // Set descriptor table address
-        let desc_addr = self.desc as u64;
-        self.reg_write32(QUEUE_DESC_LOW, desc_addr as u32);
-        self.reg_write32(QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
-
-        // Set available ring address
-        let avail_addr = self.avail as u64;
-        self.reg_write32(QUEUE_DRIVER_LOW, avail_addr as u32);
-        self.reg_write32(QUEUE_DRIVER_HIGH, (avail_addr >> 32) as u32);
-
-        // Set used ring address
-        let used_addr = self.used as u64;
-        self.reg_write32(QUEUE_DEVICE_LOW, used_addr as u32);
-        self.reg_write32(QUEUE_DEVICE_HIGH, (used_addr >> 32) as u32);
-
-        self.reg_write32(QUEUE_READY, 1);
+        if self
+            .transport
+            .setup_queue(
+                QUEUE_INDEX,
+                QUEUE_SIZE,
+                self.desc as u64,
+                self.avail as u64,
+                self.used as u64,
+            )
+            .is_err()
+        {
+            return false;
+        }
 
         // Set up descriptor chain: [header, data, status]
         unsafe {
             // Descriptor 0: header (BlkRequest type + sector)
             core::ptr::write_volatile(&mut (*self.desc).addr, self.request as u64);
             core::ptr::write_volatile(&mut (*self.desc).len, 16); // type(4) + reserved(4) + sector(8)
-            core::ptr::write_volatile(&mut (*self.desc).flags, VIRTQ_DESC_F_NEXT);
+            core::ptr::write_volatile(&mut (*self.desc).flags, desc_flags::NEXT);
             core::ptr::write_volatile(&mut (*self.desc).next, 1);
 
             // Descriptor 1: data (512 bytes) — device-writable
@@ -202,7 +118,7 @@ impl VirtioBlk {
             core::ptr::write_volatile(&mut (*self.desc.add(1)).len, 512);
             core::ptr::write_volatile(
                 &mut (*self.desc.add(1)).flags,
-                VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+                desc_flags::NEXT | desc_flags::WRITE,
             );
             core::ptr::write_volatile(&mut (*self.desc.add(1)).next, 2);
 
@@ -212,7 +128,7 @@ impl VirtioBlk {
                 (self.request as usize + 16 + 512) as u64,
             );
             core::ptr::write_volatile(&mut (*self.desc.add(2)).len, 1);
-            core::ptr::write_volatile(&mut (*self.desc.add(2)).flags, VIRTQ_DESC_F_WRITE);
+            core::ptr::write_volatile(&mut (*self.desc.add(2)).flags, desc_flags::WRITE);
 
             self.free_head = 0;
             *self.last_used_idx.get() = 0;
@@ -221,38 +137,8 @@ impl VirtioBlk {
         true
     }
 
-    fn set_status_bits(&self, bits: u32) {
-        let status = self.reg_read32(STATUS);
-        self.reg_write32(STATUS, status | bits);
-    }
-
-    fn negotiate_features(&self, version: u32) -> bool {
-        self.reg_write32(DEVICE_FEATURES_SEL, 1);
-        let device_features_hi = self.reg_read32(DEVICE_FEATURES);
-        self.reg_write32(DEVICE_FEATURES_SEL, 0);
-        let _device_features_lo = self.reg_read32(DEVICE_FEATURES);
-
-        self.reg_write32(DRIVER_FEATURES_SEL, 0);
-        self.reg_write32(DRIVER_FEATURES, 0);
-        self.reg_write32(DRIVER_FEATURES_SEL, 1);
-
-        let mut driver_features_hi = 0;
-        if version == 2 {
-            let version_1_mask = 1u32 << (VIRTIO_F_VERSION_1_BIT - 32);
-            if device_features_hi & version_1_mask == 0 {
-                return false;
-            }
-            driver_features_hi |= version_1_mask;
-        }
-        self.reg_write32(DRIVER_FEATURES, driver_features_hi);
-
-        self.set_status_bits(STATUS_FEATURES_OK);
-        self.reg_read32(STATUS) & STATUS_FEATURES_OK != 0
-    }
-
     fn read_capacity(&mut self) {
-        // The capacity is at offset 0 in the config space (0x100)
-        self.capacity = self.reg_read64(0x100);
+        self.capacity = self.transport.read_config64(0);
     }
 
     pub fn read_sector(&self, sector: u64, buf: &mut [u8; 512]) -> bool {
@@ -284,12 +170,12 @@ impl VirtioBlk {
         }
 
         // Notify device
-        self.reg_write32(QUEUE_NOTIFY, 0);
+        self.transport.notify_queue(QUEUE_INDEX);
 
         // Wait for used ring
         let last = unsafe { *self.last_used_idx.get() };
         let mut spins = 0usize;
-        while spins < READ_SPIN_LIMIT {
+        while spins < kernel::generated_config::OPENION_VIRTIO_BLK_POLL_LIMIT {
             fence(Ordering::Acquire);
             let used_idx = unsafe { core::ptr::read_volatile(&(*self.used).idx) };
             if used_idx != last {
@@ -302,14 +188,11 @@ impl VirtioBlk {
             core::hint::spin_loop();
         }
 
-        if spins >= READ_SPIN_LIMIT {
+        if spins >= kernel::generated_config::OPENION_VIRTIO_BLK_POLL_LIMIT {
             return false;
         }
 
-        let irq_status = self.reg_read32(INTERRUPT_STATUS);
-        if irq_status != 0 {
-            self.reg_write32(INTERRUPT_ACK, irq_status);
-        }
+        self.transport.ack_interrupts();
 
         unsafe {
             let status = core::ptr::read_volatile(&(*self.request).status);
@@ -349,9 +232,7 @@ impl Driver for VirtioBlk {
         if irq_id != self.irq_num {
             return false;
         }
-        // Acknowledge interrupt
-        let status = self.reg_read32(INTERRUPT_STATUS);
-        self.reg_write32(INTERRUPT_ACK, status);
+        self.transport.ack_interrupts();
         true
     }
 
@@ -390,31 +271,28 @@ impl BlockDevice for VirtioBlk {
 
 impl VirtioBlk {
     pub fn init_hw(&mut self) -> DriverResult<()> {
-        // Check magic
-        if self.reg_read32(MAGIC) != 0x74726976 {
-            return Err(DriverErr::InitFailed);
-        }
-        // Check version (1=legacy, 2=modern)
-        let ver = self.reg_read32(VERSION);
-        if ver != 1 && ver != 2 {
-            kernel::kdebug!("VirtIO: unsupported version {}", ver);
-            return Err(DriverErr::InitFailed);
-        }
-        // Check device ID (2 = block)
-        if self.reg_read32(DEVICE_ID) != 2 {
-            return Err(DriverErr::InitFailed);
-        }
+        let ver = self
+            .transport
+            .validate_device(
+                DEVICE_ID_BLOCK,
+                kernel::generated_config::OPENION_VIRTIO_MMIO_LEGACY,
+            )
+            .map_err(|err| match err {
+                virtio_common::VirtioError::LegacyDisabled
+                | virtio_common::VirtioError::MissingModernFeature
+                | virtio_common::VirtioError::FeaturesRejected => DriverErr::InvalidConfig,
+                _ => DriverErr::InitFailed,
+            })?;
 
-        // Reset
-        self.reg_write32(STATUS, 0);
-        fence(Ordering::SeqCst);
-        // Acknowledge
-        self.set_status_bits(STATUS_ACK);
-        // Driver
-        self.set_status_bits(STATUS_DRIVER);
-        // Features
-        if !self.negotiate_features(ver) {
-            self.set_status_bits(STATUS_FAILED);
+        self.transport.reset();
+        self.transport.set_status_bits(status::ACKNOWLEDGE);
+        self.transport.set_status_bits(status::DRIVER);
+        if self
+            .transport
+            .negotiate_features(ver, FeatureSet::empty())
+            .is_err()
+        {
+            self.transport.fail();
             return Err(DriverErr::InvalidConfig);
         }
 
@@ -424,7 +302,7 @@ impl VirtioBlk {
         }
 
         // Driver OK
-        self.set_status_bits(STATUS_DRIVER_OK);
+        self.transport.set_status_bits(status::DRIVER_OK);
 
         self.read_capacity();
 
@@ -450,10 +328,9 @@ impl DriverFactory for VirtioBlkFactory {
     }
 
     fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
-        // Read device_id to check if this is a block device
-        let device_id = unsafe { read_volatile((resource.base_addr + 0x08) as *const u32) };
-        if device_id != 2 {
-            return None; // Not a block device
+        let transport = MmioTransport::new(resource.base_addr);
+        if transport.device_id() != DEVICE_ID_BLOCK {
+            return None;
         }
 
         let driver = BLK_POOL.alloc(VirtioBlk::new(resource.base_addr, resource.irq))?;

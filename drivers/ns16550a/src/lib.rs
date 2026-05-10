@@ -1,7 +1,8 @@
 #![no_std]
 
-use kernel::driver::char::CharDevice;
+use kernel::driver::char::{CharDevice, DynCharDevice};
 use kernel::driver::manager::AnyDriver;
+use kernel::driver::terminal::{DynTerminalDevice, TerminalDevice};
 use kernel::driver::{
     DeviceResource, Driver, DriverErr, DriverFactory, DriverResult, GenericDeviceConfig,
     StaticDriverPool,
@@ -105,6 +106,16 @@ impl Driver for Ns16550a {
         }
         true
     }
+
+    fn as_char_device(&self) -> Option<&'static DynCharDevice> {
+        let dev: &DynCharDevice = self;
+        Some(unsafe { core::mem::transmute::<&DynCharDevice, &'static DynCharDevice>(dev) })
+    }
+
+    fn as_terminal_device(&self) -> Option<&'static DynTerminalDevice> {
+        let dev: &DynTerminalDevice = self;
+        Some(unsafe { core::mem::transmute::<&DynTerminalDevice, &'static DynTerminalDevice>(dev) })
+    }
 }
 
 impl CharDevice for Ns16550a {
@@ -118,6 +129,8 @@ impl CharDevice for Ns16550a {
     }
 }
 
+impl TerminalDevice for Ns16550a {}
+
 /// FDT-compatible factory for NS16550A UART.
 /// Matches compatible = "ns16550a" and creates a driver instance.
 pub struct Ns16550aFactory;
@@ -127,7 +140,7 @@ static DRIVER_POOL: StaticDriverPool<Ns16550a, MAX_NS16550A> = StaticDriverPool:
 
 impl DriverFactory for Ns16550aFactory {
     fn compatible(&self) -> &[&str] {
-        &["ns16550a"]
+        &["ns16550a", "ns16550", "ns16550a-uart", "snps,dw-apb-uart"]
     }
 
     fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {

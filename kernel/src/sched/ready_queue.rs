@@ -1,6 +1,9 @@
 use super::task::{Priority, TaskControlBlock};
 
-const MAX_TASKS: usize = 32;
+#[cfg(feature = "mcu_profile")]
+const MAX_TASKS: usize = 8;
+#[cfg(not(feature = "mcu_profile"))]
+const MAX_TASKS: usize = crate::generated_config::OPENION_TASK_CAP;
 pub const MAX_PRIORITIES: usize = 8;
 pub const MIN_PRIORITY: Priority = 0;
 pub const MAX_PRIORITY: Priority = (MAX_PRIORITIES - 1) as Priority;

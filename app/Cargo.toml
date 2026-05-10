@@ -13,4 +13,6 @@ arch = { path = "../arch", default-features = false }
 
 [features]
 default = ["builtin_shell"]
+async_rt = ["kernel/async_rt"]
 builtin_shell = ["kernel/builtin_shell"]
+mcu_profile = ["kernel/mcu_profile"]

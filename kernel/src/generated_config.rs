@@ -3,78 +3,114 @@
 
 #![allow(unused)]
 
-/// Platform crate to build. Supported: qemu-virt-riscv, qemu-an521.
-pub const OPENION_PLATFORM: &str = "qemu-virt-riscv";
-
-/// Rust target triple passed to cargo.
-pub const OPENION_TARGET: &str = "riscv64imac-unknown-none-elf";
-
-/// Build the RISC-V platform in Supervisor mode on SBI firmware.
-pub const OPENION_RISCV_S_MODE: bool = true;
-
-/// Build the RISC-V platform in Machine mode. Experimental for this tree.
-pub const OPENION_RISCV_M_MODE: bool = false;
-
-/// Kernel network backend. Supported: ionnet, smoltcp.
-pub const OPENION_NET_BACKEND: &str = "ionnet";
-
-/// Kernel tick frequency in Hz.
+/// Kernel scheduler tick frequency in Hz. Platforms decide how this maps to hardware timers.
 pub const OPENION_SYSTICK_HZ: u32 = 1000;
 
-/// Size of the generic IRQ handler table.
-pub const OPENION_EXTERNAL_IRQ_COUNT: usize = 64;
+/// Maximum number of scheduler task control blocks.
+pub const OPENION_TASK_CAP: usize = 32;
 
-/// Enable the built-in interactive shell.
+/// Root task stack capacity measured in machine words.
+pub const OPENION_ROOT_STACK_WORDS: usize = 1024;
+
+/// Idle task stack capacity measured in machine words.
+pub const OPENION_IDLE_STACK_WORDS: usize = 256;
+
+/// Enable the cooperative Rust Future executor running on top of the RTOS scheduler.
+pub const OPENION_ASYNC_RT: bool = true;
+
+/// Fixed number of async task slots managed by the kernel executor.
+pub const OPENION_ASYNC_TASK_SLOTS: usize = 8;
+
+/// Static kernel heap size in bytes.
+pub const OPENION_KERNEL_HEAP_SIZE: usize = 65536;
+
+/// Maximum number of RAMFS vnode objects.
+pub const OPENION_RAMFS_NODE_CAP: usize = 64;
+
+/// Maximum inline bytes stored by one RAMFS file node.
+pub const OPENION_RAMFS_FILE_MAX_SIZE: usize = 4096;
+
+/// Enable the built-in interactive shell task.
 pub const OPENION_BUILTIN_SHELL: bool = true;
+
+/// Stack size in bytes for the built-in shell task.
+pub const OPENION_SHELL_STACK_SIZE: usize = 32768;
+
+/// Enable generic flattened device tree parsing support.
+pub const OPENION_FDT: bool = true;
 
 /// Scan FDT and instantiate matching driver factories during boot.
 pub const OPENION_FDT_AUTO_PROBE: bool = true;
 
-/// RISC-V QEMU virt timer frequency in Hz.
-pub const OPENION_QEMU_VIRT_RISCV_CPU_HZ: u32 = 10000000;
+/// Size of the generic IRQ handler table.
+pub const OPENION_EXTERNAL_IRQ_COUNT: usize = 64;
 
-/// RISC-V QEMU virt RAM base.
-pub const OPENION_QEMU_VIRT_RISCV_MEMORY_BASE: usize = 0x8000_0000;
+/// Build RISC-V code for Supervisor mode on SBI firmware.
+pub const OPENION_RISCV_S_MODE: bool = true;
 
-/// RISC-V QEMU virt RAM size in bytes.
-pub const OPENION_QEMU_VIRT_RISCV_MEMORY_SIZE: usize = 134217728;
+/// Build RISC-V code for Machine mode. Experimental for this tree.
+pub const OPENION_RISCV_M_MODE: bool = false;
 
-/// Fallback DTB physical address if firmware does not pass one.
-pub const OPENION_QEMU_VIRT_RISCV_DTB_ADDR: usize = 0x8006_8000;
+/// Enable the RISC-V M extension. Disabling this builds closer to RV64IA/RV64IAC and may expose compiler/runtime assumptions.
+pub const OPENION_RISCV_EXT_M: bool = true;
 
-/// NS16550A UART0 MMIO base.
-pub const OPENION_QEMU_VIRT_RISCV_UART0_BASE: usize = 0x1000_0000;
+/// Enable the RISC-V A extension for native atomic instructions.
+pub const OPENION_RISCV_EXT_A: bool = true;
 
-/// NS16550A UART0 PLIC IRQ.
-pub const OPENION_QEMU_VIRT_RISCV_UART0_IRQ: u32 = 10;
+/// Enable the compressed instruction set extension. Disable this to build RISC-V code with IMA only.
+pub const OPENION_RISCV_EXT_C: bool = true;
 
-/// VirtIO block PLIC IRQ for the default QEMU device.
-pub const OPENION_QEMU_VIRT_RISCV_VIRTIO_BLK_IRQ: u32 = 1;
+/// Enable the RISC-V F extension for compiler-generated single-precision floating-point instructions. Kernel FPU context handling is not part of the stable path.
+pub const OPENION_RISCV_EXT_F: bool = false;
 
-/// QEMU virt PLIC MMIO base.
-pub const OPENION_QEMU_VIRT_RISCV_PLIC_BASE: usize = 0x0c00_0000;
+/// Enable the RISC-V D extension. This requires F and should remain off unless FPU state handling is being validated.
+pub const OPENION_RISCV_EXT_D: bool = false;
 
-/// QEMU virt CLINT MMIO base.
-pub const OPENION_QEMU_VIRT_RISCV_CLINT_BASE: usize = 0x0200_0000;
+/// Enable the LLVM/Rust B bundle, covering the common Zba, Zbb, and Zbs bit-manipulation extensions.
+pub const OPENION_RISCV_EXT_B: bool = true;
 
-/// AN521 CPU clock in Hz.
-pub const OPENION_QEMU_AN521_CPU_HZ: u32 = 25000000;
+/// Enable the RISC-V V extension for vector code generation. Leave off unless vector state save/restore is being worked on.
+pub const OPENION_RISCV_EXT_V: bool = false;
 
-/// AN521 RAM base.
-pub const OPENION_QEMU_AN521_MEMORY_BASE: usize = 0x8000_0000;
+/// Enable the separated Zicsr extension for CSR instructions.
+pub const OPENION_RISCV_EXT_ZICSR: bool = true;
 
-/// AN521 RAM size in bytes.
-pub const OPENION_QEMU_AN521_MEMORY_SIZE: usize = 16777216;
+/// Enable the separated Zifencei extension for fence.i.
+pub const OPENION_RISCV_EXT_ZIFENCEI: bool = true;
 
-/// CMSDK UART MMIO base.
-pub const OPENION_QEMU_AN521_UART_BASE: usize = 0x4020_0000;
+/// Compile experimental RISC-V H-extension hypervisor support. This does not make it the default boot path.
+pub const OPENION_RISCV_HYPERVISOR: bool = false;
 
-/// CMSDK UART IRQ number.
-pub const OPENION_QEMU_AN521_UART_IRQ: u32 = 0;
+/// Enable the NS16550A UART driver crate for platforms that instantiate it.
+pub const OPENION_DRIVER_NS16550A: bool = true;
 
-/// LAN9118 MMIO base.
-pub const OPENION_QEMU_AN521_LAN9118_BASE: usize = 0x4200_0000;
+/// Enable the CMSDK UART driver crate for ARM MPS2-style platforms.
+pub const OPENION_DRIVER_CMSDK_UART: bool = false;
 
-/// LAN9118 IRQ number.
-pub const OPENION_QEMU_AN521_LAN9118_IRQ: u32 = 48;
+/// Enable the STM32L4x5 USART driver crate for QEMU STM32L475 and STM32L4-style platforms.
+pub const OPENION_DRIVER_STM32L4X5_USART: bool = false;
+
+/// Allow legacy VirtIO MMIO devices. Modern VERSION_1 devices remain preferred.
+pub const OPENION_VIRTIO_MMIO_LEGACY: bool = false;
+
+/// Enable the VirtIO MMIO block driver.
+pub const OPENION_DRIVER_VIRTIO_BLK: bool = false;
+
+/// Maximum polling iterations for one synchronous VirtIO block request before returning an error.
+pub const OPENION_VIRTIO_BLK_POLL_LIMIT: usize = 2000000;
+
+/// Enable the VirtIO MMIO GPU driver and expose it as a framebuffer device.
+pub const OPENION_DRIVER_VIRTIO_GPU: bool = false;
+
+/// Maximum polling iterations for one synchronous VirtIO GPU control request before returning an error.
+pub const OPENION_VIRTIO_GPU_POLL_LIMIT: usize = 2000000;
+
+/// Enable the VirtIO MMIO entropy driver for platforms that expose virtio-rng devices.
+pub const OPENION_DRIVER_VIRTIO_RNG: bool = false;
+
+/// Enable the LAN9118 Ethernet driver.
+pub const OPENION_DRIVER_LAN9118: bool = false;
+
+/// Kernel network backend. Supported: ionnet, smoltcp.
+pub const OPENION_NET_BACKEND: &str = "ionnet";
 

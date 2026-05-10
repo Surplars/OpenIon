@@ -3,7 +3,10 @@ pub mod exfat;
 
 pub const NAME_MAX: usize = 32;
 pub const DIR_MAX_ENTRIES: usize = 16;
-pub const FILE_MAX_SIZE: usize = 4096;
+#[cfg(feature = "mcu_profile")]
+pub const FILE_MAX_SIZE: usize = 256;
+#[cfg(not(feature = "mcu_profile"))]
+pub const FILE_MAX_SIZE: usize = crate::generated_config::OPENION_RAMFS_FILE_MAX_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
@@ -115,7 +118,10 @@ impl Vnode {
     }
 }
 
-const NODE_POOL_CAP: usize = 64;
+#[cfg(feature = "mcu_profile")]
+const NODE_POOL_CAP: usize = 12;
+#[cfg(not(feature = "mcu_profile"))]
+const NODE_POOL_CAP: usize = crate::generated_config::OPENION_RAMFS_NODE_CAP;
 const ROOT_UNSET: usize = usize::MAX;
 
 use crate::sync::Mutex;
@@ -416,7 +422,7 @@ pub fn list_path(path: &str, callback: &mut dyn FnMut(&DirEntry)) -> Option<usiz
         });
         return Some(1);
     }
-    let _ = mount.fs.list_dir(&adapter, entry.first_cluster, &mut |e| {
+    let _ = mount.fs.list_entry_dir(&adapter, &entry, &mut |e| {
         let mut nm = [0u8; NAME_MAX];
         let cl = e.name_len.min(NAME_MAX - 1);
         nm[..cl].copy_from_slice(&e.name[..cl]);
@@ -511,7 +517,13 @@ pub fn read_mount_file(path: &str, buf: &mut [u8]) -> usize {
         if !entry.is_dir {
             result = mount
                 .fs
-                .read_file(&adapter, entry.first_cluster, buf)
+                .read_file(
+                    &adapter,
+                    entry.first_cluster,
+                    entry.data_length,
+                    entry.no_fat_chain,
+                    buf,
+                )
                 .unwrap_or(0);
         }
     }

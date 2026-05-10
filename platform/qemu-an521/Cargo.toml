@@ -13,9 +13,12 @@ bench = false
 kernel = { path = "../../kernel", default-features = false }
 arch = { path = "../../arch", default-features = false }
 app = { path = "../../app", default-features = false }
-cmsdk_uart = { path = "../../drivers/cmsdk_uart" }
-lan9118 ={ path = "../../drivers/lan9118" }
+cmsdk_uart = { path = "../../drivers/cmsdk_uart", optional = true }
+lan9118 ={ path = "../../drivers/lan9118", optional = true }
 
 [features]
 default = ["builtin_shell"]
+async_rt = ["app/async_rt", "arch/async_rt"]
 builtin_shell = ["app/builtin_shell"]
+driver_cmsdk_uart = ["dep:cmsdk_uart"]
+driver_lan9118 = ["dep:lan9118"]

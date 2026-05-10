@@ -1,25 +1,23 @@
-use super::{Driver, DriverResult};
+use super::{Driver, DriverErr, DriverResult, GenericDeviceConfig};
+use core::cell::UnsafeCell;
+#[cfg(feature = "async_rt")]
+use core::future::Future;
+#[cfg(feature = "async_rt")]
+use core::pin::Pin;
+use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "async_rt")]
+use core::task::{Context, Poll};
+use spin::Once;
 
-/// 字符设备 Trait
-/// 用于所有按字节读写的设备流（如 UART, 键盘, 鼠标, 虚拟控制台等）
+/// Byte-oriented character device, such as UART, USB CDC, or a virtual console.
 pub trait CharDevice: Driver {
-    /// 从设备读取一个字节 (非阻塞)
-    ///
-    /// # 返回
-    /// * `Ok(u8)` - 成功读取到数据
-    /// * `Err(DriverErr::Busy)` - 当前没有数据可读
-    /// * `Err(...)` - 其他错误
+    /// Read one byte without blocking.
     fn read_byte(&self) -> DriverResult<u8>;
 
-    /// 向设备写入一个字节 (非阻塞)
-    ///
-    /// # 返回
-    /// * `Ok(())` - 写入成功或已缓存
-    /// * `Err(DriverErr::Busy)` - 缓存已满或设备忙
+    /// Write one byte without sleeping.
     fn write_byte(&self, byte: u8) -> DriverResult<()>;
 
-    /// 持续读取数据到缓冲区（默认提供实现）
-    /// 尽量多读，遇到没数据或错误就返回当前已读长度
+    /// Read as many bytes as are immediately available.
     fn read_buffer(&self, buf: &mut [u8]) -> DriverResult<usize> {
         let mut count = 0;
         for b in buf.iter_mut() {
@@ -33,8 +31,7 @@ pub trait CharDevice: Driver {
         Ok(count)
     }
 
-    /// 将缓冲区数据持续写入设备（默认提供实现）
-    /// 尽量多写，如果设备满则返回已写长度
+    /// Write as many bytes as the device accepts immediately.
     fn write_buffer(&self, buf: &[u8]) -> DriverResult<usize> {
         let mut count = 0;
         for &b in buf.iter() {
@@ -48,11 +45,10 @@ pub trait CharDevice: Driver {
     }
 }
 
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::Once;
+pub type DynCharDevice = dyn CharDevice<Config = GenericDeviceConfig, Error = DriverErr>;
 
 const BUF_SIZE: usize = 128;
+
 pub struct RxBuffer {
     data: UnsafeCell<[u8; BUF_SIZE]>,
     head: AtomicUsize,
@@ -98,13 +94,21 @@ impl RxBuffer {
 
 static UART_RX_BUF: RxBuffer = RxBuffer::new();
 static RX_POLL_FN: Once<fn() -> Option<u8>> = Once::new();
+#[cfg(feature = "async_rt")]
+static RX_EVENT: crate::sched::async_rt::AsyncEvent = crate::sched::async_rt::AsyncEvent::new();
 
 pub fn set_rx_poll_fn(poll: fn() -> Option<u8>) {
     RX_POLL_FN.call_once(|| poll);
 }
 
 pub fn push_to_rx_buf(byte: u8) {
-    let _ = UART_RX_BUF.push(byte);
+    if UART_RX_BUF.push(byte) {
+        #[cfg(feature = "async_rt")]
+        {
+            crate::sched::async_rt::note_rx_byte(byte);
+            RX_EVENT.signal();
+        }
+    }
 }
 
 pub fn pop_from_rx_buf() -> Option<u8> {
@@ -117,4 +121,44 @@ pub fn pop_from_rx_buf() -> Option<u8> {
     let byte = poll();
     crate::arch::enable_irq();
     byte.or_else(|| UART_RX_BUF.pop())
+}
+
+#[cfg(feature = "async_rt")]
+pub fn read_byte_async() -> ReadByte {
+    ReadByte {
+        wait: RX_EVENT.wait(),
+    }
+}
+
+#[cfg(feature = "async_rt")]
+pub fn wait_rx_async() -> crate::sched::async_rt::EventWait<'static> {
+    RX_EVENT.wait()
+}
+
+#[cfg(feature = "async_rt")]
+pub struct ReadByte {
+    wait: crate::sched::async_rt::EventWait<'static>,
+}
+
+#[cfg(feature = "async_rt")]
+impl Future for ReadByte {
+    type Output = u8;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Some(byte) = pop_from_rx_buf() {
+            return Poll::Ready(byte);
+        }
+
+        match Pin::new(&mut self.wait).poll(cx) {
+            Poll::Ready(()) => {
+                if let Some(byte) = pop_from_rx_buf() {
+                    Poll::Ready(byte)
+                } else {
+                    self.wait = RX_EVENT.wait();
+                    Poll::Pending
+                }
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
