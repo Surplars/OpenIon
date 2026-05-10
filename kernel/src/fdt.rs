@@ -30,6 +30,8 @@ pub struct FdtNode<'a> {
     reg: Option<&'a [u8]>,
     interrupt: Option<u32>,
     timebase_frequency: Option<u32>,
+    device_type: Option<&'a [u8]>,
+    stdout_path: Option<&'a [u8]>,
     address_cells: u8,
     size_cells: u8,
     child_address_cells: u8,
@@ -98,6 +100,18 @@ impl<'a> FdtNode<'a> {
 
     pub const fn timebase_frequency(&self) -> Option<u32> {
         self.timebase_frequency
+    }
+
+    pub fn device_type(&self) -> Option<&'a str> {
+        self.device_type
+            .and_then(|data| first_nul_string(data))
+            .and_then(|s| core::str::from_utf8(s).ok())
+    }
+
+    pub fn stdout_path(&self) -> Option<&'a str> {
+        self.stdout_path
+            .and_then(|data| first_nul_string(data))
+            .and_then(|s| core::str::from_utf8(s).ok())
     }
 
     pub const fn address_cells(&self) -> u8 {
@@ -205,6 +219,8 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                         reg: None,
                         interrupt: None,
                         timebase_frequency: None,
+                        device_type: None,
+                        stdout_path: None,
                         address_cells,
                         size_cells,
                         child_address_cells: DEFAULT_ADDRESS_CELLS,
@@ -264,6 +280,8 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                             node.timebase_frequency = Some(read_be32_slice(&data[0..4]));
                         }
                     }
+                    "device_type" => node.device_type = Some(data),
+                    "stdout-path" => node.stdout_path = Some(data),
                     "#address-cells" => {
                         if len >= 4 {
                             node.child_address_cells =

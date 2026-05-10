@@ -4,7 +4,7 @@
 pub mod plic;
 pub mod timer;
 
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use kernel::driver::manager::{AnyDriver, DriverManager};
 use kernel::driver::net::DynNetDevice;
 use kernel::log::{CpuIdProvider, PlatformConsole, set_console, set_cpu_id_provider};
@@ -15,12 +15,16 @@ use ns16550a::Ns16550aFactory;
 pub struct IonSocVerilator;
 
 const DEFAULT_CPU_FREQ_HZ: u32 = 10_000_000;
-const MEMORY_BASE: usize = 0x4010_0000;
-const MEMORY_SIZE: usize = 15 * 1024 * 1024;
+const DEFAULT_MEMORY_BASE: usize = 0x4010_0000;
+const DEFAULT_MEMORY_SIZE: usize = 15 * 1024 * 1024;
+const MAX_STDOUT_PATH: usize = 96;
 
 static CPU_FREQ_HZ: AtomicU32 = AtomicU32::new(DEFAULT_CPU_FREQ_HZ);
+static MEMORY_BASE: AtomicUsize = AtomicUsize::new(DEFAULT_MEMORY_BASE);
+static MEMORY_SIZE: AtomicUsize = AtomicUsize::new(DEFAULT_MEMORY_SIZE);
 static UART0_BASE: AtomicUsize = AtomicUsize::new(0);
 static UART0_IRQ: AtomicU32 = AtomicU32::new(0);
+static STDOUT_PATH: StdoutPath = StdoutPath::new();
 
 static PLATFORM_DRIVERS: [&'static dyn AnyDriver; 0] = [];
 
@@ -200,8 +204,8 @@ impl Platform for IonSocVerilator {
             cpu_freq_hz: CPU_FREQ_HZ.load(Ordering::Relaxed),
             systick_hz: kernel::generated_config::OPENION_SYSTICK_HZ,
             external_irq_count: kernel::generated_config::OPENION_EXTERNAL_IRQ_COUNT,
-            memory_base: MEMORY_BASE,
-            memory_size: MEMORY_SIZE,
+            memory_base: MEMORY_BASE.load(Ordering::Relaxed),
+            memory_size: MEMORY_SIZE.load(Ordering::Relaxed),
             kernel_end: ekernel as *const () as usize,
         }
     }
@@ -267,6 +271,12 @@ fn discover_from_fdt() {
 
     unsafe {
         kernel::fdt::walk_nodes(dtb, |node| {
+            if let Some(stdout_path) = node.stdout_path() {
+                STDOUT_PATH.set(stdout_path);
+            }
+        });
+
+        kernel::fdt::walk_nodes(dtb, |node| {
             if let Some(freq) = node.timebase_frequency() {
                 CPU_FREQ_HZ.store(freq, Ordering::Relaxed);
             }
@@ -275,7 +285,10 @@ fn discover_from_fdt() {
                 return;
             };
 
-            if is_uart_node(node) && uart_base() == 0 {
+            if is_memory_node(node) {
+                MEMORY_BASE.store(reg.base, Ordering::Relaxed);
+                MEMORY_SIZE.store(reg.size, Ordering::Relaxed);
+            } else if is_uart_node(node) && should_select_uart(node) {
                 UART0_BASE.store(reg.base, Ordering::Relaxed);
                 UART0_IRQ.store(node.interrupt_or_zero(), Ordering::Relaxed);
             } else if is_plic_node(node) {
@@ -284,7 +297,99 @@ fn discover_from_fdt() {
                 timer::set_base(reg.base);
             }
         });
+
+        if uart_base() == 0 && STDOUT_PATH.is_configured() {
+            kernel::fdt::walk_nodes(dtb, |node| {
+                let Some(reg) = node.first_reg() else {
+                    return;
+                };
+                if is_uart_node(node) && uart_base() == 0 {
+                    UART0_BASE.store(reg.base, Ordering::Relaxed);
+                    UART0_IRQ.store(node.interrupt_or_zero(), Ordering::Relaxed);
+                }
+            });
+        }
     }
+}
+
+struct StdoutPath {
+    bytes: [AtomicU8; MAX_STDOUT_PATH],
+    len: AtomicUsize,
+}
+
+impl StdoutPath {
+    const fn new() -> Self {
+        Self {
+            bytes: [const { core::sync::atomic::AtomicU8::new(0) }; MAX_STDOUT_PATH],
+            len: AtomicUsize::new(0),
+        }
+    }
+
+    fn set(&self, path: &str) {
+        let raw = path.as_bytes();
+        let len = raw.len().min(MAX_STDOUT_PATH);
+        for (i, byte) in raw.iter().copied().take(len).enumerate() {
+            self.bytes[i].store(byte, Ordering::Relaxed);
+        }
+        self.len.store(len, Ordering::Release);
+    }
+
+    fn matches_node(&self, node_name: &str) -> bool {
+        let len = self.len.load(Ordering::Acquire);
+        if len == 0 {
+            return false;
+        }
+
+        let mut path = [0u8; MAX_STDOUT_PATH];
+        for (i, slot) in path.iter_mut().enumerate().take(len) {
+            *slot = self.bytes[i].load(Ordering::Relaxed);
+        }
+
+        let path = &path[..len];
+        let path = strip_stdout_options(path);
+        let Some(last) = last_path_component(path) else {
+            return false;
+        };
+
+        last == node_name.as_bytes()
+    }
+
+    fn is_configured(&self) -> bool {
+        self.len.load(Ordering::Acquire) != 0
+    }
+}
+
+fn strip_stdout_options(path: &[u8]) -> &[u8] {
+    match path.iter().position(|&b| b == b':') {
+        Some(idx) => &path[..idx],
+        None => path,
+    }
+}
+
+fn last_path_component(path: &[u8]) -> Option<&[u8]> {
+    let end = path.len();
+    let start = path
+        .iter()
+        .rposition(|&b| b == b'/')
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    if start >= end {
+        None
+    } else {
+        Some(&path[start..end])
+    }
+}
+
+fn should_select_uart(node: kernel::fdt::FdtNode<'_>) -> bool {
+    if STDOUT_PATH.is_configured() {
+        STDOUT_PATH.matches_node(node.name())
+    } else {
+        uart_base() == 0
+    }
+}
+
+fn is_memory_node(node: kernel::fdt::FdtNode<'_>) -> bool {
+    node.device_type() == Some("memory") || node.name().starts_with("memory@")
 }
 
 fn is_uart_node(node: kernel::fdt::FdtNode<'_>) -> bool {
