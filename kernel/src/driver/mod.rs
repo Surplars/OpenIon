@@ -182,4 +182,13 @@ pub trait DriverFactory: Send + Sync {
     /// shape is also used by platforms that register MMIO devices manually.
     /// Returns `Some(driver)` if this factory can handle the device.
     fn probe(&self, resource: DeviceResource) -> Option<&'static dyn manager::AnyDriver>;
+
+    /// FDT-aware probe hook for drivers that need optional per-node properties.
+    fn probe_fdt(
+        &self,
+        resource: DeviceResource,
+        _node: crate::fdt::FdtNode<'static>,
+    ) -> Option<&'static dyn manager::AnyDriver> {
+        self.probe(resource)
+    }
 }

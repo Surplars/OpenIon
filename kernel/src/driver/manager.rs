@@ -199,7 +199,7 @@ impl DriverManager {
                     if let Some(f) = *factory {
                         for &c in f.compatible() {
                             if node.compatible_matches(c) {
-                                if let Some(driver) = f.probe(resource) {
+                                if let Some(driver) = f.probe_fdt(resource, node) {
                                     if Self::register_driver(driver).is_ok() {
                                         if driver.auto_init().is_ok() {
                                             crate::kdebug!(

@@ -28,58 +28,88 @@ static NS16550A_CONSOLE: Ns16550aConsole = Ns16550aConsole;
 pub struct Ns16550a {
     base_addr: usize,
     irq_num: u32,
+    reg_shift: u8,
+    reg_io_width: u8,
 }
 
 impl Ns16550a {
     pub const fn new(base_addr: usize, irq_num: u32) -> Self {
-        Self { base_addr, irq_num }
+        Self::with_layout(base_addr, irq_num, 0, 1)
     }
 
-    fn reg(&self, offset: usize) -> *mut u8 {
-        (self.base_addr + offset) as *mut u8
-    }
-
-    pub fn init_hw(&self) {
-        unsafe {
-            // Disable interrupts
-            self.reg(IER).write_volatile(0x00);
-
-            // Set DLAB to configure baud rate divisor
-            self.reg(LCR).write_volatile(0x80);
-            // Divisor = 3 → 38400 baud (QEMU default clock)
-            self.reg(0).write_volatile(0x03);
-            self.reg(1).write_volatile(0x00);
-
-            // 8N1, DLAB=0
-            self.reg(LCR).write_volatile(0x03);
-
-            // Enable & clear FIFO, 14-byte trigger
-            self.reg(FCR).write_volatile(0xC7);
-
-            // Enable RX interrupt
-            self.reg(IER).write_volatile(0x01);
+    pub const fn with_layout(
+        base_addr: usize,
+        irq_num: u32,
+        reg_shift: u8,
+        reg_io_width: u8,
+    ) -> Self {
+        Self {
+            base_addr,
+            irq_num,
+            reg_shift,
+            reg_io_width,
         }
     }
 
-    pub fn putc(&self, ch: u8) {
-        unsafe {
-            while self.reg(LSR).read_volatile() & LSR_THRE == 0 {}
-            self.reg(THR).write_volatile(ch);
-        }
+    fn reg_addr(&self, offset: usize) -> usize {
+        self.base_addr + (offset << self.reg_shift)
     }
 
-    pub fn getc(&self) -> Option<u8> {
+    fn read_reg(&self, offset: usize) -> u8 {
+        let addr = self.reg_addr(offset);
         unsafe {
-            if self.reg(LSR).read_volatile() & LSR_DR != 0 {
-                Some(self.reg(RBR).read_volatile())
-            } else {
-                None
+            match self.reg_io_width {
+                4 => (addr as *const u32).read_volatile() as u8,
+                _ => (addr as *const u8).read_volatile(),
             }
         }
     }
 
+    fn write_reg(&self, offset: usize, value: u8) {
+        let addr = self.reg_addr(offset);
+        unsafe {
+            match self.reg_io_width {
+                4 => (addr as *mut u32).write_volatile(value as u32),
+                _ => (addr as *mut u8).write_volatile(value),
+            }
+        }
+    }
+
+    pub fn init_hw(&self) {
+        // Disable interrupts
+        self.write_reg(IER, 0x00);
+
+        // Set DLAB to configure baud rate divisor
+        self.write_reg(LCR, 0x80);
+        // Divisor = 3 -> 38400 baud (QEMU default clock)
+        self.write_reg(0, 0x03);
+        self.write_reg(1, 0x00);
+
+        // 8N1, DLAB=0
+        self.write_reg(LCR, 0x03);
+
+        // Enable & clear FIFO, 14-byte trigger
+        self.write_reg(FCR, 0xC7);
+
+        // Enable RX interrupt
+        self.write_reg(IER, 0x01);
+    }
+
+    pub fn putc(&self, ch: u8) {
+        while self.read_reg(LSR) & LSR_THRE == 0 {}
+        self.write_reg(THR, ch);
+    }
+
+    pub fn getc(&self) -> Option<u8> {
+        if self.read_reg(LSR) & LSR_DR != 0 {
+            Some(self.read_reg(RBR))
+        } else {
+            None
+        }
+    }
+
     pub fn irq_pending(&self) -> bool {
-        unsafe { self.reg(IIR).read_volatile() & IIR_NO_INT == 0 }
+        self.read_reg(IIR) & IIR_NO_INT == 0
     }
 
     fn set_active(&self) {
@@ -182,6 +212,27 @@ impl DriverFactory for Ns16550aFactory {
     fn probe(&self, resource: DeviceResource) -> Option<&'static dyn AnyDriver> {
         DRIVER_POOL
             .alloc(Ns16550a::new(resource.base_addr, resource.irq))
+            .map(|d| d as _)
+    }
+
+    fn probe_fdt(
+        &self,
+        resource: DeviceResource,
+        node: kernel::fdt::FdtNode<'static>,
+    ) -> Option<&'static dyn AnyDriver> {
+        let reg_shift = node.prop_u32("reg-shift").unwrap_or(0).min(u8::MAX as u32) as u8;
+        let reg_io_width = match node.prop_u32("reg-io-width").unwrap_or(1) {
+            4 => 4,
+            _ => 1,
+        };
+
+        DRIVER_POOL
+            .alloc(Ns16550a::with_layout(
+                resource.base_addr,
+                resource.irq,
+                reg_shift,
+                reg_io_width,
+            ))
             .map(|d| d as _)
     }
 }
