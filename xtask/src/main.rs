@@ -23,6 +23,18 @@ struct PlatformSpec {
     linker_script: &'static str,
     arch: ArchKind,
     supports_qemu_run: bool,
+    supports_riscv_s_mode: bool,
+    supports_riscv_m_mode: bool,
+    default_riscv_s_mode: bool,
+    supports_async_rt: bool,
+    supports_hypervisor: bool,
+    supports_ns16550a: bool,
+    supports_cmsdk_uart: bool,
+    supports_stm32l4x5_usart: bool,
+    supports_virtio_blk: bool,
+    supports_virtio_gpu: bool,
+    supports_virtio_rng: bool,
+    supports_lan9118: bool,
 }
 
 const PLATFORMS: &[PlatformSpec] = &[
@@ -33,6 +45,18 @@ const PLATFORMS: &[PlatformSpec] = &[
         linker_script: "platform/qemu-virt-riscv/linker.ld",
         arch: ArchKind::Riscv,
         supports_qemu_run: true,
+        supports_riscv_s_mode: true,
+        supports_riscv_m_mode: true,
+        default_riscv_s_mode: true,
+        supports_async_rt: true,
+        supports_hypervisor: true,
+        supports_ns16550a: true,
+        supports_cmsdk_uart: false,
+        supports_stm32l4x5_usart: false,
+        supports_virtio_blk: true,
+        supports_virtio_gpu: true,
+        supports_virtio_rng: true,
+        supports_lan9118: false,
     },
     PlatformSpec {
         name: "ionsoc-verilator",
@@ -41,6 +65,18 @@ const PLATFORMS: &[PlatformSpec] = &[
         linker_script: "platform/ionsoc-verilator/linker.ld",
         arch: ArchKind::Riscv,
         supports_qemu_run: false,
+        supports_riscv_s_mode: true,
+        supports_riscv_m_mode: false,
+        default_riscv_s_mode: true,
+        supports_async_rt: true,
+        supports_hypervisor: false,
+        supports_ns16550a: true,
+        supports_cmsdk_uart: false,
+        supports_stm32l4x5_usart: false,
+        supports_virtio_blk: false,
+        supports_virtio_gpu: false,
+        supports_virtio_rng: false,
+        supports_lan9118: false,
     },
     PlatformSpec {
         name: "qemu-an521",
@@ -49,6 +85,18 @@ const PLATFORMS: &[PlatformSpec] = &[
         linker_script: "platform/qemu-an521/linker.ld",
         arch: ArchKind::Arm,
         supports_qemu_run: true,
+        supports_riscv_s_mode: false,
+        supports_riscv_m_mode: false,
+        default_riscv_s_mode: false,
+        supports_async_rt: true,
+        supports_hypervisor: false,
+        supports_ns16550a: false,
+        supports_cmsdk_uart: true,
+        supports_stm32l4x5_usart: false,
+        supports_virtio_blk: false,
+        supports_virtio_gpu: false,
+        supports_virtio_rng: false,
+        supports_lan9118: true,
     },
     PlatformSpec {
         name: "qemu-stm32l475",
@@ -57,6 +105,18 @@ const PLATFORMS: &[PlatformSpec] = &[
         linker_script: "platform/qemu-stm32l475/linker.ld",
         arch: ArchKind::Arm,
         supports_qemu_run: true,
+        supports_riscv_s_mode: false,
+        supports_riscv_m_mode: false,
+        default_riscv_s_mode: false,
+        supports_async_rt: false,
+        supports_hypervisor: false,
+        supports_ns16550a: false,
+        supports_cmsdk_uart: false,
+        supports_stm32l4x5_usart: true,
+        supports_virtio_blk: false,
+        supports_virtio_gpu: false,
+        supports_virtio_rng: false,
+        supports_lan9118: false,
     },
 ];
 
@@ -257,7 +317,7 @@ fn prepare_build(
     let mut cfg = load_build_config(config_path)?;
     cfg.platform = spec.name.to_string();
     cfg.target = target_for_config(spec, &cfg).to_string();
-    apply_platform_defaults(&mut cfg);
+    apply_platform_constraints(spec, &mut cfg);
 
     validate_build_config(&cfg)?;
     Ok(cfg)
@@ -347,34 +407,113 @@ fn load_build_config(config_path: Option<&Path>) -> Result<BuildConfig> {
     })
 }
 
-fn apply_platform_defaults(cfg: &mut BuildConfig) {
-    // Platform constraints narrow schema-level options to what each board crate
-    // actually wires today.
-    match cfg.platform.as_str() {
-        "ionsoc-verilator" => {
-            cfg.riscv_s_mode = true;
-            cfg.riscv_m_mode = false;
-            cfg.riscv_hypervisor = false;
-            cfg.driver_cmsdk_uart = false;
-            cfg.driver_stm32l4x5_usart = false;
-            cfg.driver_virtio_blk = false;
-            cfg.driver_virtio_gpu = false;
-            cfg.driver_virtio_rng = false;
-            cfg.driver_lan9118 = false;
+fn apply_platform_constraints(spec: &PlatformSpec, cfg: &mut BuildConfig) {
+    if spec.arch == ArchKind::Riscv {
+        if !spec.supports_riscv_s_mode {
+            constrain_bool(spec, &mut cfg.riscv_s_mode, false, "OPENION_RISCV_S_MODE");
         }
-        "qemu-stm32l475" => {
-            cfg.async_rt = false;
-            cfg.riscv_s_mode = false;
-            cfg.riscv_m_mode = false;
-            cfg.riscv_hypervisor = false;
-            cfg.driver_ns16550a = false;
-            cfg.driver_cmsdk_uart = false;
-            cfg.driver_virtio_blk = false;
-            cfg.driver_virtio_gpu = false;
-            cfg.driver_virtio_rng = false;
-            cfg.driver_lan9118 = false;
+        if !spec.supports_riscv_m_mode {
+            constrain_bool(spec, &mut cfg.riscv_m_mode, false, "OPENION_RISCV_M_MODE");
+            if !cfg.riscv_s_mode {
+                constrain_bool(
+                    spec,
+                    &mut cfg.riscv_s_mode,
+                    spec.default_riscv_s_mode,
+                    "OPENION_RISCV_S_MODE",
+                );
+            }
         }
-        _ => {}
+    } else {
+        constrain_bool(spec, &mut cfg.riscv_s_mode, false, "OPENION_RISCV_S_MODE");
+        constrain_bool(spec, &mut cfg.riscv_m_mode, false, "OPENION_RISCV_M_MODE");
+    }
+
+    if spec.arch == ArchKind::Riscv && cfg.riscv_s_mode == cfg.riscv_m_mode {
+        if spec.default_riscv_s_mode {
+            constrain_bool(spec, &mut cfg.riscv_s_mode, true, "OPENION_RISCV_S_MODE");
+            constrain_bool(spec, &mut cfg.riscv_m_mode, false, "OPENION_RISCV_M_MODE");
+        } else {
+            constrain_bool(spec, &mut cfg.riscv_s_mode, false, "OPENION_RISCV_S_MODE");
+            constrain_bool(spec, &mut cfg.riscv_m_mode, true, "OPENION_RISCV_M_MODE");
+        }
+    }
+
+    if !spec.supports_async_rt {
+        constrain_bool(spec, &mut cfg.async_rt, false, "OPENION_ASYNC_RT");
+    }
+    if !spec.supports_hypervisor {
+        constrain_bool(
+            spec,
+            &mut cfg.riscv_hypervisor,
+            false,
+            "OPENION_RISCV_HYPERVISOR",
+        );
+    }
+    if !spec.supports_ns16550a {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_ns16550a,
+            false,
+            "OPENION_DRIVER_NS16550A",
+        );
+    }
+    if !spec.supports_cmsdk_uart {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_cmsdk_uart,
+            false,
+            "OPENION_DRIVER_CMSDK_UART",
+        );
+    }
+    if !spec.supports_stm32l4x5_usart {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_stm32l4x5_usart,
+            false,
+            "OPENION_DRIVER_STM32L4X5_USART",
+        );
+    }
+    if !spec.supports_virtio_blk {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_virtio_blk,
+            false,
+            "OPENION_DRIVER_VIRTIO_BLK",
+        );
+    }
+    if !spec.supports_virtio_gpu {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_virtio_gpu,
+            false,
+            "OPENION_DRIVER_VIRTIO_GPU",
+        );
+    }
+    if !spec.supports_virtio_rng {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_virtio_rng,
+            false,
+            "OPENION_DRIVER_VIRTIO_RNG",
+        );
+    }
+    if !spec.supports_lan9118 {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_lan9118,
+            false,
+            "OPENION_DRIVER_LAN9118",
+        );
+    }
+}
+
+fn constrain_bool(spec: &PlatformSpec, value: &mut bool, required: bool, key: &str) {
+    if *value != required {
+        println!(
+            "platform {} constrains {}={} (config requested {})",
+            spec.name, key, required, *value
+        );
+        *value = required;
     }
 }
 
@@ -438,6 +577,7 @@ fn cargo_build(cfg: &BuildConfig, release: bool) -> Result<()> {
     );
 
     let features = collect_features(spec, cfg);
+    print_build_summary(spec, cfg, &features, release);
 
     if !features.is_empty() {
         cmd.args(["--features", &features.join(",")]);
@@ -448,6 +588,24 @@ fn cargo_build(cfg: &BuildConfig, release: bool) -> Result<()> {
         bail!("cargo build failed with status {}", status);
     }
     Ok(())
+}
+
+fn print_build_summary(
+    spec: &PlatformSpec,
+    cfg: &BuildConfig,
+    features: &[&'static str],
+    release: bool,
+) {
+    println!("build platform: {}", spec.name);
+    println!("build package: {}", spec.package);
+    println!("build target: {}", cfg.target);
+    println!("build profile: {}", if release { "release" } else { "dev" });
+    println!("build linker: {}", spec.linker_script);
+    if features.is_empty() {
+        println!("build features: <none>");
+    } else {
+        println!("build features: {}", features.join(","));
+    }
 }
 
 fn collect_features(spec: &PlatformSpec, cfg: &BuildConfig) -> Vec<&'static str> {
