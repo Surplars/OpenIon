@@ -53,6 +53,7 @@ pub fn start_first_task() -> ! {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
 global_asm!(
     r#"
 .section .text
@@ -65,6 +66,25 @@ load_first_task_and_start:
     sd t1, 0(t2)        # CURRENT_TCB = NEXT_TCB
     
     ld sp, 0(t1)        # sp = NEXT_TCB->sp
+
+    # Goto trap_exit to restore context and start task
+    j trap_exit
+    "#
+);
+
+#[cfg(target_pointer_width = "32")]
+global_asm!(
+    r#"
+.section .text
+.global load_first_task_and_start
+load_first_task_and_start:
+    la t0, NEXT_TCB
+    lw t1, 0(t0)        # t1 = &NEXT_TCB
+
+    la t2, CURRENT_TCB
+    sw t1, 0(t2)        # CURRENT_TCB = NEXT_TCB
+
+    lw sp, 0(t1)        # sp = NEXT_TCB->sp
 
     # Goto trap_exit to restore context and start task
     j trap_exit

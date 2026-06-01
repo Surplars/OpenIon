@@ -17,6 +17,7 @@ pub static mut INIT_TASK_STACK_FN: Option<fn(&mut [usize], usize) -> usize> = No
 pub static mut YIELD_CPU_FN: Option<fn()> = None;
 pub static mut IDLE_HINT_FN: Option<fn()> = None;
 pub static mut EXTERNAL_IRQ_HANDLER: Option<fn()> = None;
+pub static mut EXTERNAL_IRQ_ID_HANDLER: Option<fn(u32)> = None;
 
 pub fn init<A: Arch>() {
     unsafe {

@@ -326,7 +326,11 @@ impl VirtioGpu {
             resource_id: RESOURCE_ID,
             padding: 0,
         };
-        self.send_command(&transfer, RESP_OK_NODATA, core::mem::size_of::<GpuCtrlHdr>())?;
+        self.send_command(
+            &transfer,
+            RESP_OK_NODATA,
+            core::mem::size_of::<GpuCtrlHdr>(),
+        )?;
 
         let flush = ResourceFlush {
             hdr: GpuCtrlHdr::new(CMD_RESOURCE_FLUSH),
@@ -341,7 +345,12 @@ impl VirtioGpu {
         self.fill_rect(0, 0, self.width, self.height, bgra)
     }
 
-    fn send_command<T>(&self, cmd: &T, expected_type: u32, response_len: usize) -> DriverResult<()> {
+    fn send_command<T>(
+        &self,
+        cmd: &T,
+        expected_type: u32,
+        response_len: usize,
+    ) -> DriverResult<()> {
         if self.io_busy.swap(true, Ordering::Acquire) {
             return Err(DriverErr::Busy);
         }

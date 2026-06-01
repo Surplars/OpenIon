@@ -15,7 +15,7 @@ members = [
 	"platform/ionsoc-verilator",
 	"platform/qemu-an521",
 	"platform/qemu-stm32l475",
-	"platform/qemu-virt-riscv",
+	"platform/riscv-generic",
 	"xtask",
 ]
 

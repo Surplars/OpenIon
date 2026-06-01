@@ -45,11 +45,20 @@ pub const OPENION_FDT_AUTO_PROBE: bool = true;
 /// Size of the generic IRQ handler table.
 pub const OPENION_EXTERNAL_IRQ_COUNT: usize = 64;
 
+/// Build RISC-V code for a 64-bit hart and Sv39-capable address space.
+pub const OPENION_RISCV_XLEN_64: bool = false;
+
+/// Build RISC-V code for a 32-bit hart and Sv32-capable address space.
+pub const OPENION_RISCV_XLEN_32: bool = true;
+
 /// Build RISC-V code for Supervisor mode on SBI firmware.
 pub const OPENION_RISCV_S_MODE: bool = true;
 
 /// Build RISC-V code for Machine mode. Experimental for this tree.
 pub const OPENION_RISCV_M_MODE: bool = false;
+
+/// Physical load/link address for riscv-generic kernels. OpenSBI or the loader must jump here.
+pub const OPENION_RISCV_KERNEL_BASE: usize = 1342177280;
 
 /// Enable the RISC-V M extension. Disabling this builds closer to RV64IA/RV64IAC and may expose compiler/runtime assumptions.
 pub const OPENION_RISCV_EXT_M: bool = true;
@@ -82,7 +91,7 @@ pub const OPENION_RISCV_EXT_ZIFENCEI: bool = true;
 pub const OPENION_RISCV_HYPERVISOR: bool = false;
 
 /// Enable the NS16550A UART driver crate for platforms that instantiate it.
-pub const OPENION_DRIVER_NS16550A: bool = true;
+pub const OPENION_DRIVER_NS16550A: bool = false;
 
 /// Enable the CMSDK UART driver crate for ARM MPS2-style platforms.
 pub const OPENION_DRIVER_CMSDK_UART: bool = false;

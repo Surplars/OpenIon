@@ -32,9 +32,12 @@ pub struct FdtNode<'a> {
     interrupts_extended: Option<&'a [u8]>,
     timebase_frequency: Option<u32>,
     device_type: Option<&'a [u8]>,
+    status: Option<&'a [u8]>,
     stdout_path: Option<&'a [u8]>,
     reg_shift: Option<u32>,
     reg_io_width: Option<u32>,
+    riscv_ndev: Option<u32>,
+    riscv_numints: Option<u32>,
     address_cells: u8,
     size_cells: u8,
     child_address_cells: u8,
@@ -124,6 +127,17 @@ impl<'a> FdtNode<'a> {
             .and_then(|s| core::str::from_utf8(s).ok())
     }
 
+    pub fn is_available(&self) -> bool {
+        match self
+            .status
+            .and_then(|data| first_nul_string(data))
+            .and_then(|s| core::str::from_utf8(s).ok())
+        {
+            Some("disabled") | Some("reserved") | Some("fail") => false,
+            _ => true,
+        }
+    }
+
     pub fn stdout_path(&self) -> Option<&'a str> {
         self.stdout_path
             .and_then(|data| first_nul_string(data))
@@ -134,6 +148,8 @@ impl<'a> FdtNode<'a> {
         match name {
             "reg-shift" => self.reg_shift,
             "reg-io-width" => self.reg_io_width,
+            "riscv,ndev" => self.riscv_ndev,
+            "riscv,numints" | "riscv,num-interrupts" => self.riscv_numints,
             _ => None,
         }
     }
@@ -245,9 +261,12 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                         interrupts_extended: None,
                         timebase_frequency: None,
                         device_type: None,
+                        status: None,
                         stdout_path: None,
                         reg_shift: None,
                         reg_io_width: None,
+                        riscv_ndev: None,
+                        riscv_numints: None,
                         address_cells,
                         size_cells,
                         child_address_cells: DEFAULT_ADDRESS_CELLS,
@@ -309,6 +328,7 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                         }
                     }
                     "device_type" => node.device_type = Some(data),
+                    "status" => node.status = Some(data),
                     "stdout-path" => node.stdout_path = Some(data),
                     "reg-shift" => {
                         if len >= 4 {
@@ -318,6 +338,16 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                     "reg-io-width" => {
                         if len >= 4 {
                             node.reg_io_width = Some(read_be32_slice(&data[0..4]));
+                        }
+                    }
+                    "riscv,ndev" => {
+                        if len >= 4 {
+                            node.riscv_ndev = Some(read_be32_slice(&data[0..4]));
+                        }
+                    }
+                    "riscv,numints" | "riscv,num-interrupts" => {
+                        if len >= 4 {
+                            node.riscv_numints = Some(read_be32_slice(&data[0..4]));
                         }
                     }
                     "#address-cells" => {

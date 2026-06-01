@@ -11,7 +11,7 @@ memory management, and platform/architecture separation.
 
 | Platform | Architecture | QEMU machine | Crate |
 |---|---|---|---|
-| `qemu-virt-riscv` | RISC-V 64 `rv64imac` | `qemu-system-riscv64 -machine virt` | `platform/qemu-virt-riscv` |
+| `riscv-generic` | RISC-V `rv64imac`/`rv32imac` | `qemu-system-riscv{32,64} -machine virt` | `platform/riscv-generic` |
 | `qemu-an521` | ARM Cortex-M33 | `qemu-system-arm -M mps2-an521` | `platform/qemu-an521` |
 | `qemu-stm32l475` | ARM Cortex-M4 | `qemu-system-arm -M b-l475e-iot01a` | `platform/qemu-stm32l475` |
 
@@ -29,7 +29,7 @@ memory management, and platform/architecture separation.
 ```bash
 make config
 make menuconfig
-make build PLAT=qemu-virt-riscv
+make build PLAT=riscv-generic
 make build PLAT=qemu-an521
 make build PLAT=qemu-stm32l475
 ```
@@ -51,7 +51,7 @@ always launched with the host target through `HOST_TARGET`. Override it if your
 host differs:
 
 ```bash
-make build PLAT=qemu-virt-riscv HOST_TARGET=x86_64-unknown-linux-gnu
+make build PLAT=riscv-generic HOST_TARGET=x86_64-unknown-linux-gnu
 ```
 
 The root workspace `default-members` are only `app`, `arch`, and `kernel`.
@@ -66,7 +66,7 @@ existing config.
 ## Run In QEMU
 
 ```bash
-make run PLAT=qemu-virt-riscv
+make run PLAT=riscv-generic
 make run PLAT=qemu-an521
 make run PLAT=qemu-stm32l475
 ```
@@ -79,7 +79,7 @@ shell should fail with a normal error instead of hanging.
 
 ## Shell Smoke Test
 
-After booting `qemu-virt-riscv`, the following commands should return to the
+After booting `riscv-generic`, the following commands should return to the
 shell prompt without hanging:
 
 ```text
@@ -121,7 +121,7 @@ directories.
   selection.
 - RAMFS-based VFS with stable `NodeId` handles.
 - Mount table snapshots to avoid printing or block I/O while holding locks.
-- Read-only exFAT mounting over VirtIO block on `qemu-virt-riscv`.
+- Read-only exFAT mounting over VirtIO block on `riscv-generic`.
 - Driver registry with snapshot APIs and FDT auto-probing.
 - Fixed-capacity structures on core paths for MCU compatibility.
 - RISC-V S-mode boot on RustSBI/OpenSBI-style firmware by default.
@@ -157,13 +157,13 @@ than complete hardware validation.
 
 ## RISC-V Notes
 
-`qemu-virt-riscv` defaults to `s-mode`. The platform receives `hartid` and
+`riscv-generic` defaults to `s-mode`. The platform receives `hartid` and
 `dtb_pa` from firmware; if no DTB address is provided, it falls back to the
 DTB address configured in `.config.toml`.
 
 RISC-V CSR access, SBI calls, trap setup, and timer interrupt enables live under
 `arch/src/riscv`. QEMU virt MMIO details such as PLIC and CLINT addresses remain
-under `platform/qemu-virt-riscv`.
+under `platform/riscv-generic`.
 
 The schema also exposes the RISC-V compressed-instruction toggle, so the
 platform can be built as IMA-only when needed.

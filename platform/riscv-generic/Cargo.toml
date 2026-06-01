@@ -1,11 +1,11 @@
 [package]
-name = "qemu-virt-riscv"
+name = "riscv-generic"
 version = "0.1.0"
 authors = ["Surplars <surplars@vip.qq.com>"]
 edition = "2024"
 
 [[bin]]
-name = "qemu-virt-riscv"
+name = "riscv-generic"
 test = false
 bench = false
 

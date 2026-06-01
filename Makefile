@@ -1,4 +1,4 @@
-PLAT ?= qemu-virt-riscv
+PLAT ?= riscv-generic
 HOST_TARGET ?= x86_64-pc-windows-msvc
 
 .PHONY: all config menuconfig build run clean

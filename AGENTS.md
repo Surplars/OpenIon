@@ -14,10 +14,10 @@ memory management, and clean module boundaries.
 ```bash
 make config
 make menuconfig
-make build PLAT=qemu-virt-riscv
+make build PLAT=riscv-generic
 make build PLAT=qemu-an521
 make build PLAT=qemu-stm32l475
-make run   PLAT=qemu-virt-riscv
+make run   PLAT=riscv-generic
 make run   PLAT=qemu-an521
 make run   PLAT=qemu-stm32l475
 ```
@@ -42,7 +42,7 @@ make run   PLAT=qemu-stm32l475
 | `kernel` | `kernel/` | Architecture-neutral kernel core |
 | `arch` | `arch/` | ISA/CPU-specific code |
 | `app` | `app/` | Root task and shell |
-| `qemu-virt-riscv` | `platform/qemu-virt-riscv/` | RISC-V 64 platform binary |
+| `riscv-generic` | `platform/riscv-generic/` | Generic RISC-V platform binary |
 | `an521` | `platform/qemu-an521/` | ARM Cortex-M33 platform binary |
 | `qemu-stm32l475` | `platform/qemu-stm32l475/` | STM32L475 QEMU platform binary |
 | `ns16550a` | `drivers/ns16550a/` | NS16550A UART driver |
@@ -91,8 +91,8 @@ Keep these boundaries strict:
 | `app/` | Root task and user-facing kernel apps such as the shell |
 
 Do not put RISC-V CSR access or inline assembly in `kernel/` or platform code
-when an `arch/src/riscv` helper is appropriate. Do not put QEMU virt MMIO
-addresses into `arch/`; they belong in `platform/qemu-virt-riscv`.
+when an `arch/src/riscv` helper is appropriate. Do not put board MMIO policy
+into `arch/`; RISC-V platform discovery belongs in `platform/riscv-generic`.
 
 ## Boot Flow
 
@@ -108,19 +108,19 @@ addresses into `arch/`; they belong in `platform/qemu-virt-riscv`.
 
 ## RISC-V Mode Notes
 
-`qemu-virt-riscv` defaults to `s-mode`, running on SBI firmware. The `arch` and
+`riscv-generic` defaults to `s-mode`, running on SBI firmware. The `arch` and
 platform crates also expose `m-mode` features, but the default linker layout is
 for the SBI jump target.
 
 - S-mode uses supervisor CSRs, SBI timer setup, and `sstatus::set_sie()`.
 - M-mode uses machine CSRs, CLINT timer compare, and `mstatus::set_mie()`.
 - RISC-V CSR and SBI access should stay under `arch/src/riscv`.
-- QEMU virt PLIC and CLINT addresses should stay under
-  `platform/qemu-virt-riscv`.
+- RISC-V PLIC, CLINT, timer, and memory discovery should be DTB-driven under
+  `platform/riscv-generic`.
 
 ## Interrupt Architecture
 
-### RISC-V `qemu-virt-riscv`
+### RISC-V `riscv-generic`
 
 - External interrupts go through the platform PLIC.
 - `arch/src/riscv/trap.rs` detects timer, external, and yield traps.
@@ -250,7 +250,7 @@ board/device emulation policy out of `kernel`.
 For a broad build check:
 
 ```bash
-make build PLAT=qemu-virt-riscv
+make build PLAT=riscv-generic
 make build PLAT=qemu-an521
 ```
 

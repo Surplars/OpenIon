@@ -198,6 +198,24 @@ help = "RISC-V privilege mode, ISA extension toggles, and experimental H-extensi
 visible = true
 
 [[menus.items]]
+name = "RISC-V RV64"
+key = "OPENION_RISCV_XLEN_64"
+type = "bool"
+default = true
+conflicts_with = ["OPENION_RISCV_XLEN_32"]
+help = "Build RISC-V code for a 64-bit hart and Sv39-capable address space."
+rebuild = true
+
+[[menus.items]]
+name = "RISC-V RV32"
+key = "OPENION_RISCV_XLEN_32"
+type = "bool"
+default = false
+conflicts_with = ["OPENION_RISCV_XLEN_64"]
+help = "Build RISC-V code for a 32-bit hart and Sv32-capable address space."
+rebuild = true
+
+[[menus.items]]
 name = "RISC-V S-mode"
 key = "OPENION_RISCV_S_MODE"
 type = "bool"
@@ -215,11 +233,20 @@ conflicts_with = ["OPENION_RISCV_S_MODE"]
 help = "Build RISC-V code for Machine mode. Experimental for this tree."
 rebuild = true
 
+[[menus.items]]
+name = "RISC-V Kernel Link Base"
+key = "OPENION_RISCV_KERNEL_BASE"
+type = "usize"
+default = 0x80200000
+display = "hex"
+help = "Physical load/link address for riscv-generic kernels. OpenSBI or the loader must jump here."
+rebuild = true
+
 [[menus]]
 name = "ISA Extensions"
 key = "ARCH_RISCV_ISA"
 parent = "ARCH_RISCV"
-help = "RISC-V target-feature switches passed to rustc for qemu-virt-riscv builds."
+help = "RISC-V target-feature switches passed to rustc for riscv-generic builds."
 visible = true
 
 [[menus.items]]

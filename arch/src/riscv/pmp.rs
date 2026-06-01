@@ -87,18 +87,24 @@ impl PmpManager {
             }
         }
 
-        // Write pmpcfg: on RV64, each pmpcfg register holds 8 entries (8 bits each)
-        // pmpcfg0 = entries 0-7, pmpcfg2 = entries 8-15
-        // (odd-numbered pmpcfg registers don't exist on RV64)
-        let cfg_group = idx / 8;
-        let cfg_byte = idx % 8;
+        #[cfg(target_pointer_width = "64")]
+        let (cfg_csr, cfg_byte) = (idx / 8, idx % 8);
+        #[cfg(target_pointer_width = "32")]
+        let (cfg_csr, cfg_byte) = (idx / 4, idx % 4);
 
         // Read current pmpcfg, modify the target byte, write back
         let current: usize;
         unsafe {
-            match cfg_group {
+            match cfg_csr {
                 0 => core::arch::asm!("csrr {}, pmpcfg0", out(reg) current),
+                #[cfg(target_pointer_width = "32")]
+                1 => core::arch::asm!("csrr {}, pmpcfg1", out(reg) current),
+                #[cfg(target_pointer_width = "64")]
                 1 => core::arch::asm!("csrr {}, pmpcfg2", out(reg) current),
+                #[cfg(target_pointer_width = "32")]
+                2 => core::arch::asm!("csrr {}, pmpcfg2", out(reg) current),
+                #[cfg(target_pointer_width = "32")]
+                3 => core::arch::asm!("csrr {}, pmpcfg3", out(reg) current),
                 _ => return,
             }
         }
@@ -107,9 +113,16 @@ impl PmpManager {
         let new_val = (current & !mask) | ((cfg as usize) << (cfg_byte * 8));
 
         unsafe {
-            match cfg_group {
+            match cfg_csr {
                 0 => core::arch::asm!("csrw pmpcfg0, {}", in(reg) new_val),
+                #[cfg(target_pointer_width = "32")]
+                1 => core::arch::asm!("csrw pmpcfg1, {}", in(reg) new_val),
+                #[cfg(target_pointer_width = "64")]
                 1 => core::arch::asm!("csrw pmpcfg2, {}", in(reg) new_val),
+                #[cfg(target_pointer_width = "32")]
+                2 => core::arch::asm!("csrw pmpcfg2, {}", in(reg) new_val),
+                #[cfg(target_pointer_width = "32")]
+                3 => core::arch::asm!("csrw pmpcfg3, {}", in(reg) new_val),
                 _ => {}
             }
         }

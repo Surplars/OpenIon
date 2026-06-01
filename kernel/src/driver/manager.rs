@@ -189,6 +189,9 @@ impl DriverManager {
 
         unsafe {
             crate::fdt::walk_nodes(dtb, |node| {
+                if !node.is_available() {
+                    return;
+                }
                 let Some(reg) = node.first_reg() else {
                     return;
                 };

@@ -6,6 +6,9 @@ pub mod irq;
 pub mod plic;
 pub mod pmp;
 pub mod sbi;
+#[cfg(target_arch = "riscv32")]
+pub mod sv32;
+#[cfg(target_arch = "riscv64")]
 pub mod sv39;
 pub mod timer;
 pub mod trap;

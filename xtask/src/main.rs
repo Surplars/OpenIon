@@ -8,6 +8,9 @@ const CONFIG_PATH: &str = ".config.toml";
 const BACKUP_CONFIG_PATH: &str = ".config.old.toml";
 const GENERATED_PATH: &str = "kernel/src/generated_config.rs";
 const RISCV64IMA_TARGET_PATH: &str = "config/targets/riscv64ima-unknown-none-elf.json";
+const RISCV32IMA_TARGET_PATH: &str = "config/targets/riscv32ima-unknown-none-elf.json";
+const RISCV64IMAC_TARGET: &str = "riscv64imac-unknown-none-elf";
+const RISCV32IMAC_TARGET: &str = "riscv32imac-unknown-none-elf";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArchKind {
@@ -39,10 +42,30 @@ struct PlatformSpec {
 
 const PLATFORMS: &[PlatformSpec] = &[
     PlatformSpec {
+        name: "riscv-generic",
+        package: "riscv-generic",
+        default_target: RISCV64IMAC_TARGET,
+        linker_script: "platform/riscv-generic/linker.ld",
+        arch: ArchKind::Riscv,
+        supports_qemu_run: true,
+        supports_riscv_s_mode: true,
+        supports_riscv_m_mode: true,
+        default_riscv_s_mode: true,
+        supports_async_rt: true,
+        supports_hypervisor: true,
+        supports_ns16550a: true,
+        supports_cmsdk_uart: false,
+        supports_stm32l4x5_usart: false,
+        supports_virtio_blk: true,
+        supports_virtio_gpu: true,
+        supports_virtio_rng: true,
+        supports_lan9118: false,
+    },
+    PlatformSpec {
         name: "qemu-virt-riscv",
-        package: "qemu-virt-riscv",
-        default_target: "riscv64imac-unknown-none-elf",
-        linker_script: "platform/qemu-virt-riscv/linker.ld",
+        package: "riscv-generic",
+        default_target: RISCV64IMAC_TARGET,
+        linker_script: "platform/riscv-generic/linker.ld",
         arch: ArchKind::Riscv,
         supports_qemu_run: true,
         supports_riscv_s_mode: true,
@@ -61,7 +84,7 @@ const PLATFORMS: &[PlatformSpec] = &[
     PlatformSpec {
         name: "ionsoc-verilator",
         package: "ionsoc-verilator",
-        default_target: "riscv64imac-unknown-none-elf",
+        default_target: RISCV64IMAC_TARGET,
         linker_script: "platform/ionsoc-verilator/linker.ld",
         arch: ArchKind::Riscv,
         supports_qemu_run: false,
@@ -147,7 +170,7 @@ enum Commands {
     },
     /// Build a platform through Ionix-generated configuration.
     Build {
-        /// Platform override: qemu-virt-riscv, ionsoc-verilator, qemu-an521, or qemu-stm32l475.
+        /// Platform override: riscv-generic, qemu-virt-riscv, ionsoc-verilator, qemu-an521, or qemu-stm32l475.
         #[arg(long, short = 'p')]
         platform: Option<String>,
         /// Config file override.
@@ -159,7 +182,7 @@ enum Commands {
     },
     /// Launch QEMU after building. Avoid this in agent sessions.
     Run {
-        /// Platform override: qemu-virt-riscv, ionsoc-verilator, qemu-an521, or qemu-stm32l475.
+        /// Platform override: riscv-generic, qemu-virt-riscv, ionsoc-verilator, qemu-an521, or qemu-stm32l475.
         #[arg(long, short = 'p')]
         platform: Option<String>,
         /// Config file override.
@@ -176,6 +199,9 @@ struct BuildConfig {
     platform: String,
     target: String,
     net_backend: String,
+    riscv_xlen_64: bool,
+    riscv_xlen_32: bool,
+    riscv_kernel_base: usize,
     riscv_s_mode: bool,
     riscv_m_mode: bool,
     riscv_ext_m: bool,
@@ -214,18 +240,19 @@ impl BuildConfig {
         }
 
         let profile = if release { "release" } else { "debug" };
-        let kernel = format!("target/{}/{}/{}", self.target, profile, spec.package);
+        let target_dir = target_output_dir(&self.target);
+        let kernel = format!("target/{}/{}/{}", target_dir, profile, spec.package);
 
         match spec.name {
-            "qemu-virt-riscv" => {
-                let mut cmd = Command::new("qemu-system-riscv64");
+            "riscv-generic" | "qemu-virt-riscv" => {
+                let mut cmd = Command::new(if self.riscv_xlen_32 {
+                    "qemu-system-riscv32"
+                } else {
+                    "qemu-system-riscv64"
+                });
+                cmd.args(["-machine", "virt", "-smp", "1"]);
+                cmd.args(["-bios", "default"]);
                 cmd.args([
-                    "-machine",
-                    "virt",
-                    "-smp",
-                    "1",
-                    "-bios",
-                    "platform/qemu-virt-riscv/rustsbi-prototyper-jump.elf",
                     "-kernel",
                     &kernel,
                     "-global",
@@ -256,6 +283,14 @@ impl BuildConfig {
             other => bail!("unsupported platform '{}'", other),
         }
     }
+}
+
+fn target_output_dir(target: &str) -> String {
+    Path::new(target)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(target)
+        .to_string()
 }
 
 fn platform_spec(platform: &str) -> Result<&'static PlatformSpec> {
@@ -312,7 +347,7 @@ fn prepare_build(
     config_path: Option<&Path>,
 ) -> Result<BuildConfig> {
     generate_config(config_path)?;
-    let platform = platform_override.unwrap_or("qemu-virt-riscv");
+    let platform = platform_override.unwrap_or("riscv-generic");
     let spec = platform_spec(platform)?;
     let mut cfg = load_build_config(config_path)?;
     cfg.platform = spec.name.to_string();
@@ -378,11 +413,21 @@ fn load_build_config(config_path: Option<&Path>) -> Result<BuildConfig> {
             .and_then(|v| v.as_bool())
             .with_context(|| format!("missing bool config '{}'", key))
     };
+    let get_usize = |key: &str| {
+        values
+            .get(key)
+            .and_then(|v| v.as_integer())
+            .and_then(|v| usize::try_from(v).ok())
+            .with_context(|| format!("missing usize config '{}'", key))
+    };
 
     Ok(BuildConfig {
         platform: String::new(),
         target: String::new(),
         net_backend: get_str("OPENION_NET_BACKEND")?,
+        riscv_xlen_64: get_bool("OPENION_RISCV_XLEN_64")?,
+        riscv_xlen_32: get_bool("OPENION_RISCV_XLEN_32")?,
+        riscv_kernel_base: get_usize("OPENION_RISCV_KERNEL_BASE")?,
         riscv_s_mode: get_bool("OPENION_RISCV_S_MODE")?,
         riscv_m_mode: get_bool("OPENION_RISCV_M_MODE")?,
         riscv_ext_m: get_bool("OPENION_RISCV_EXT_M")?,
@@ -409,6 +454,10 @@ fn load_build_config(config_path: Option<&Path>) -> Result<BuildConfig> {
 
 fn apply_platform_constraints(spec: &PlatformSpec, cfg: &mut BuildConfig) {
     if spec.arch == ArchKind::Riscv {
+        if cfg.riscv_xlen_32 == cfg.riscv_xlen_64 {
+            constrain_bool(spec, &mut cfg.riscv_xlen_64, true, "OPENION_RISCV_XLEN_64");
+            constrain_bool(spec, &mut cfg.riscv_xlen_32, false, "OPENION_RISCV_XLEN_32");
+        }
         if !spec.supports_riscv_s_mode {
             constrain_bool(spec, &mut cfg.riscv_s_mode, false, "OPENION_RISCV_S_MODE");
         }
@@ -424,8 +473,19 @@ fn apply_platform_constraints(spec: &PlatformSpec, cfg: &mut BuildConfig) {
             }
         }
     } else {
+        constrain_bool(spec, &mut cfg.riscv_xlen_64, false, "OPENION_RISCV_XLEN_64");
+        constrain_bool(spec, &mut cfg.riscv_xlen_32, false, "OPENION_RISCV_XLEN_32");
         constrain_bool(spec, &mut cfg.riscv_s_mode, false, "OPENION_RISCV_S_MODE");
         constrain_bool(spec, &mut cfg.riscv_m_mode, false, "OPENION_RISCV_M_MODE");
+    }
+
+    if spec.arch == ArchKind::Riscv && cfg.riscv_xlen_32 && cfg.riscv_hypervisor {
+        constrain_bool(
+            spec,
+            &mut cfg.riscv_hypervisor,
+            false,
+            "OPENION_RISCV_HYPERVISOR",
+        );
     }
 
     if spec.arch == ArchKind::Riscv && cfg.riscv_s_mode == cfg.riscv_m_mode {
@@ -535,6 +595,16 @@ fn validate_build_config(cfg: &BuildConfig) -> Result<()> {
         );
     }
 
+    if spec.arch == ArchKind::Riscv && cfg.riscv_xlen_32 == cfg.riscv_xlen_64 {
+        bail!(
+            "RISC-V config must enable exactly one of OPENION_RISCV_XLEN_32 or OPENION_RISCV_XLEN_64"
+        );
+    }
+
+    if spec.arch == ArchKind::Riscv && cfg.riscv_xlen_32 && cfg.riscv_hypervisor {
+        bail!("OPENION_RISCV_HYPERVISOR requires RV64 in this tree");
+    }
+
     if spec.arch == ArchKind::Riscv && cfg.riscv_ext_d && !cfg.riscv_ext_f {
         bail!("OPENION_RISCV_EXT_D requires OPENION_RISCV_EXT_F");
     }
@@ -546,10 +616,15 @@ fn validate_build_config(cfg: &BuildConfig) -> Result<()> {
 }
 
 fn target_for_config(spec: &'static PlatformSpec, cfg: &BuildConfig) -> &'static str {
-    if spec.arch == ArchKind::Riscv && !cfg.riscv_ext_c {
-        RISCV64IMA_TARGET_PATH
-    } else {
-        spec.default_target
+    if spec.arch != ArchKind::Riscv {
+        return spec.default_target;
+    }
+
+    match (cfg.riscv_xlen_32, cfg.riscv_ext_c) {
+        (true, true) => RISCV32IMAC_TARGET,
+        (true, false) => RISCV32IMA_TARGET_PATH,
+        (false, true) => RISCV64IMAC_TARGET,
+        (false, false) => RISCV64IMA_TARGET_PATH,
     }
 }
 
@@ -559,7 +634,7 @@ fn cargo_build(cfg: &BuildConfig, release: bool) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
 
-    if spec.arch == ArchKind::Riscv && !cfg.riscv_ext_c {
+    if cfg.target.ends_with(".json") {
         cmd.arg("-Zjson-target-spec");
         cmd.arg("-Zbuild-std=core,alloc");
     }
@@ -599,6 +674,13 @@ fn print_build_summary(
     println!("build platform: {}", spec.name);
     println!("build package: {}", spec.package);
     println!("build target: {}", cfg.target);
+    if spec.arch == ArchKind::Riscv {
+        println!(
+            "build riscv xlen: {}",
+            if cfg.riscv_xlen_32 { "rv32" } else { "rv64" }
+        );
+        println!("build riscv base: {:#x}", cfg.riscv_kernel_base);
+    }
     println!("build profile: {}", if release { "release" } else { "dev" });
     println!("build linker: {}", spec.linker_script);
     if features.is_empty() {
@@ -618,7 +700,7 @@ fn collect_features(spec: &PlatformSpec, cfg: &BuildConfig) -> Vec<&'static str>
         } else {
             features.push("s-mode");
         }
-        if package == "qemu-virt-riscv" && cfg.riscv_hypervisor {
+        if package == "riscv-generic" && cfg.riscv_hypervisor {
             features.push("hypervisor");
         }
     }
@@ -637,7 +719,7 @@ fn collect_features(spec: &PlatformSpec, cfg: &BuildConfig) -> Vec<&'static str>
         }
     }
 
-    if package == "qemu-virt-riscv" {
+    if package == "riscv-generic" {
         if cfg.driver_virtio_blk {
             features.push("driver_virtio_blk");
         }
@@ -686,6 +768,12 @@ fn cargo_rustflags(cfg: &BuildConfig) -> Result<Vec<String>> {
             flags.push(String::from("-C"));
             flags.push(format!("target-feature={}", target_features.join(",")));
         }
+
+        flags.push(String::from("-C"));
+        flags.push(format!(
+            "link-arg=--defsym=BASE_ADDRESS={:#x}",
+            cfg.riscv_kernel_base
+        ));
     }
 
     flags.push(String::from("-C"));

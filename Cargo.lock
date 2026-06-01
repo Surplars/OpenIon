@@ -1352,20 +1352,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qemu-virt-riscv"
-version = "0.1.0"
-dependencies = [
- "app",
- "arch",
- "kernel",
- "ns16550a",
- "spin",
- "virtio_blk",
- "virtio_gpu",
- "virtio_rng",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1543,6 +1529,20 @@ checksum = "2f5c1b8bf41ea746266cdee443d1d1e9125c86ce1447e1a2615abd34330d33a9"
 dependencies = [
  "critical-section",
  "embedded-hal 1.0.0",
+]
+
+[[package]]
+name = "riscv-generic"
+version = "0.1.0"
+dependencies = [
+ "app",
+ "arch",
+ "kernel",
+ "ns16550a",
+ "spin",
+ "virtio_blk",
+ "virtio_gpu",
+ "virtio_rng",
 ]
 
 [[package]]
