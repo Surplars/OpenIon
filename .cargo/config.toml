@@ -14,4 +14,7 @@ rustflags = ["-C", "link-arg=-Tplatform/qemu-stm32l475/linker.ld"]
 rustflags = ["-C", "link-arg=-Tplatform/riscv-generic/linker.ld"]
 
 [target.riscv32imac-unknown-none-elf]
-rustflags = ["-C", "link-arg=-Tplatform/riscv-generic/linker.ld"]
+rustflags = [
+    "-C", "link-arg=--defsym=BASE_ADDRESS=0x50000000",
+    "-C", "link-arg=-Tplatform/riscv-generic/linker.ld",
+]

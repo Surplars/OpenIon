@@ -4,6 +4,7 @@ members = [
 	"arch",
 	"bootloader",
 	"drivers/cmsdk_uart",
+	"drivers/esp32s31_uart",
 	"drivers/lan9118",
 	"drivers/ns16550a",
 	"drivers/stm32l4x5_usart",

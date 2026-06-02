@@ -32,6 +32,7 @@ struct PlatformSpec {
     supports_async_rt: bool,
     supports_hypervisor: bool,
     supports_ns16550a: bool,
+    supports_esp32s31_uart: bool,
     supports_cmsdk_uart: bool,
     supports_stm32l4x5_usart: bool,
     supports_virtio_blk: bool,
@@ -54,6 +55,7 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: true,
         supports_ns16550a: true,
+        supports_esp32s31_uart: true,
         supports_cmsdk_uart: false,
         supports_stm32l4x5_usart: false,
         supports_virtio_blk: true,
@@ -74,6 +76,7 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: true,
         supports_ns16550a: true,
+        supports_esp32s31_uart: false,
         supports_cmsdk_uart: false,
         supports_stm32l4x5_usart: false,
         supports_virtio_blk: true,
@@ -94,6 +97,7 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: false,
         supports_ns16550a: true,
+        supports_esp32s31_uart: false,
         supports_cmsdk_uart: false,
         supports_stm32l4x5_usart: false,
         supports_virtio_blk: false,
@@ -114,6 +118,7 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: false,
         supports_ns16550a: false,
+        supports_esp32s31_uart: false,
         supports_cmsdk_uart: true,
         supports_stm32l4x5_usart: false,
         supports_virtio_blk: false,
@@ -134,6 +139,7 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: false,
         supports_hypervisor: false,
         supports_ns16550a: false,
+        supports_esp32s31_uart: false,
         supports_cmsdk_uart: false,
         supports_stm32l4x5_usart: true,
         supports_virtio_blk: false,
@@ -217,6 +223,7 @@ struct BuildConfig {
     async_rt: bool,
     builtin_shell: bool,
     driver_ns16550a: bool,
+    driver_esp32s31_uart: bool,
     driver_cmsdk_uart: bool,
     driver_stm32l4x5_usart: bool,
     driver_virtio_blk: bool,
@@ -443,6 +450,7 @@ fn load_build_config(config_path: Option<&Path>) -> Result<BuildConfig> {
         async_rt: get_bool("OPENION_ASYNC_RT")?,
         builtin_shell: get_bool("OPENION_BUILTIN_SHELL")?,
         driver_ns16550a: get_bool("OPENION_DRIVER_NS16550A")?,
+        driver_esp32s31_uart: get_bool("OPENION_DRIVER_ESP32S31_UART")?,
         driver_cmsdk_uart: get_bool("OPENION_DRIVER_CMSDK_UART")?,
         driver_stm32l4x5_usart: get_bool("OPENION_DRIVER_STM32L4X5_USART")?,
         driver_virtio_blk: get_bool("OPENION_DRIVER_VIRTIO_BLK")?,
@@ -515,6 +523,14 @@ fn apply_platform_constraints(spec: &PlatformSpec, cfg: &mut BuildConfig) {
             &mut cfg.driver_ns16550a,
             false,
             "OPENION_DRIVER_NS16550A",
+        );
+    }
+    if !spec.supports_esp32s31_uart {
+        constrain_bool(
+            spec,
+            &mut cfg.driver_esp32s31_uart,
+            false,
+            "OPENION_DRIVER_ESP32S31_UART",
         );
     }
     if !spec.supports_cmsdk_uart {
@@ -716,6 +732,9 @@ fn collect_features(spec: &PlatformSpec, cfg: &BuildConfig) -> Vec<&'static str>
     if spec.arch == ArchKind::Riscv {
         if cfg.driver_ns16550a {
             features.push("driver_ns16550a");
+        }
+        if cfg.driver_esp32s31_uart {
+            features.push("driver_esp32s31_uart");
         }
     }
 

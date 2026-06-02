@@ -46,7 +46,7 @@ impl PageTable {
 }
 
 fn perms_to_pte_bits(perms: MemPerms) -> u32 {
-    let mut bits = PTE_V | PTE_A | PTE_D | PTE_U;
+    let mut bits = PTE_V | PTE_A | PTE_D;
     if perms.contains(MemPerms::READ) {
         bits |= PTE_R;
     }

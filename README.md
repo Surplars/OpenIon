@@ -15,6 +15,10 @@ memory management, and platform/architecture separation.
 | `qemu-an521` | ARM Cortex-M33 | `qemu-system-arm -M mps2-an521` | `platform/qemu-an521` |
 | `qemu-stm32l475` | ARM Cortex-M4 | `qemu-system-arm -M b-l475e-iot01a` | `platform/qemu-stm32l475` |
 
+`riscv-generic` is also the current ESP32-S31 hardware bring-up target. On
+ESP32-S31 it expects OpenSBI to run in M-mode and to jump into an RV32 S-mode
+kernel linked at PSRAM address `0x50000000`.
+
 ## Prerequisites
 
 - Rust nightly, selected by `rust-toolchain.toml`
@@ -33,6 +37,29 @@ make build PLAT=riscv-generic
 make build PLAT=qemu-an521
 make build PLAT=qemu-stm32l475
 ```
+
+For ESP32-S31 hardware, configure the RISC-V platform as RV32 S-mode, enable the
+ESP32-S31 UART driver, and link the kernel at `0x50000000`. The active generated
+configuration currently uses:
+
+```text
+OPENION_RISCV_XLEN_32 = true
+OPENION_RISCV_S_MODE = true
+OPENION_RISCV_KERNEL_BASE = 0x50000000
+OPENION_DRIVER_ESP32S31_UART = true
+OPENION_RISCV_SV32_MMU = true
+```
+
+Build the raw kernel image for the bootloader/OpenSBI chain:
+
+```bash
+make build PLAT=riscv-generic
+rust-objcopy -O binary target/riscv32imac-unknown-none-elf/debug/riscv-generic rtos.bin
+```
+
+The OpenIon ESP Bootloader loads that raw image from flash offset `0x00060000`
+to PSRAM `0x50000000`; OpenSBI should be built as `fw_jump` with
+`FW_JUMP_ADDR=0x50000000`.
 
 The Makefile delegates to `xtask`, which first generates
 `kernel/src/generated_config.rs` from the Ionix schema and config files:
@@ -167,6 +194,11 @@ under `platform/riscv-generic`.
 
 The schema also exposes the RISC-V compressed-instruction toggle, so the
 platform can be built as IMA-only when needed.
+
+On ESP32-S31, `riscv-generic` discovers UART, CLIC, timer, memory and CPU
+metadata from the DTB passed by OpenSBI. The ESP32-S31 path currently supports
+interactive UART input/output, CLIC external interrupt dispatch, CPU reporting
+through `cpuinfo`, and an optional early Sv32 identity map for S-mode kernels.
 
 ## Hypervisor Status
 

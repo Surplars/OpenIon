@@ -2,9 +2,12 @@
 #![no_main]
 
 pub mod clic;
+pub mod mmu;
 pub mod plic;
 pub mod timer;
 
+#[cfg(feature = "driver_esp32s31_uart")]
+use esp32s31_uart::Esp32s31UartFactory;
 use kernel::driver::manager::{AnyDriver, DriverManager};
 use kernel::driver::net::DynNetDevice;
 use kernel::log::{CpuIdProvider, PlatformConsole, set_console, set_cpu_id_provider};
@@ -118,6 +121,8 @@ impl Platform for RiscvGeneric {
     }
 
     fn register_driver_factories() {
+        #[cfg(feature = "driver_esp32s31_uart")]
+        let _ = DriverManager::register_factory(&Esp32s31UartFactory);
         #[cfg(feature = "driver_ns16550a")]
         let _ = DriverManager::register_factory(&Ns16550aFactory);
         #[cfg(feature = "driver_virtio_blk")]
@@ -163,6 +168,10 @@ impl Platform for RiscvGeneric {
                 arch::riscv::irq::enable_external_interrupts();
             }
         }
+    }
+
+    fn init_memory() {
+        mmu::init_sv32_identity_map();
     }
 
     fn init_timer() {

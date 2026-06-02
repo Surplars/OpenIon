@@ -26,6 +26,10 @@ pub trait Platform {
     /// Initialize platform interrupt controllers after the kernel IRQ table exists.
     fn init_irqs() {}
 
+    /// Enable architecture memory translation/protection after the generic
+    /// heap and frame allocator are ready.
+    fn init_memory() {}
+
     /// Initialize the platform timer after the kernel timer core exists.
     fn init_timer() {}
 

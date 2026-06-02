@@ -27,15 +27,19 @@ pub struct FdtReg {
 pub struct FdtNode<'a> {
     pub name: &'a str,
     compatible: Option<&'a [u8]>,
+    model: Option<&'a [u8]>,
     reg: Option<&'a [u8]>,
     interrupt: Option<u32>,
     interrupts_extended: Option<&'a [u8]>,
     timebase_frequency: Option<u32>,
     device_type: Option<&'a [u8]>,
+    riscv_isa: Option<&'a [u8]>,
     status: Option<&'a [u8]>,
     stdout_path: Option<&'a [u8]>,
     reg_shift: Option<u32>,
     reg_io_width: Option<u32>,
+    clock_frequency: Option<u32>,
+    current_speed: Option<u32>,
     riscv_ndev: Option<u32>,
     riscv_numints: Option<u32>,
     address_cells: u8,
@@ -51,6 +55,12 @@ impl<'a> FdtNode<'a> {
 
     pub fn first_compatible(&self) -> Option<&'a str> {
         self.compatible
+            .and_then(|data| first_nul_string(data))
+            .and_then(|s| core::str::from_utf8(s).ok())
+    }
+
+    pub fn model(&self) -> Option<&'a str> {
+        self.model
             .and_then(|data| first_nul_string(data))
             .and_then(|s| core::str::from_utf8(s).ok())
     }
@@ -127,6 +137,12 @@ impl<'a> FdtNode<'a> {
             .and_then(|s| core::str::from_utf8(s).ok())
     }
 
+    pub fn riscv_isa(&self) -> Option<&'a str> {
+        self.riscv_isa
+            .and_then(|data| first_nul_string(data))
+            .and_then(|s| core::str::from_utf8(s).ok())
+    }
+
     pub fn is_available(&self) -> bool {
         match self
             .status
@@ -148,6 +164,8 @@ impl<'a> FdtNode<'a> {
         match name {
             "reg-shift" => self.reg_shift,
             "reg-io-width" => self.reg_io_width,
+            "clock-frequency" => self.clock_frequency,
+            "current-speed" => self.current_speed,
             "riscv,ndev" => self.riscv_ndev,
             "riscv,numints" | "riscv,num-interrupts" => self.riscv_numints,
             _ => None,
@@ -256,15 +274,19 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                     nodes[depth] = Some(FdtNode {
                         name,
                         compatible: None,
+                        model: None,
                         reg: None,
                         interrupt: None,
                         interrupts_extended: None,
                         timebase_frequency: None,
                         device_type: None,
+                        riscv_isa: None,
                         status: None,
                         stdout_path: None,
                         reg_shift: None,
                         reg_io_width: None,
+                        clock_frequency: None,
+                        current_speed: None,
                         riscv_ndev: None,
                         riscv_numints: None,
                         address_cells,
@@ -315,6 +337,7 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
 
                 match prop_name {
                     "compatible" => node.compatible = Some(data),
+                    "model" => node.model = Some(data),
                     "reg" => node.reg = Some(data),
                     "interrupts" => {
                         if len >= 4 {
@@ -328,6 +351,7 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                         }
                     }
                     "device_type" => node.device_type = Some(data),
+                    "riscv,isa" => node.riscv_isa = Some(data),
                     "status" => node.status = Some(data),
                     "stdout-path" => node.stdout_path = Some(data),
                     "reg-shift" => {
@@ -338,6 +362,16 @@ pub unsafe fn walk_nodes<F: FnMut(FdtNode<'static>)>(dtb_addr: usize, mut callba
                     "reg-io-width" => {
                         if len >= 4 {
                             node.reg_io_width = Some(read_be32_slice(&data[0..4]));
+                        }
+                    }
+                    "clock-frequency" => {
+                        if len >= 4 {
+                            node.clock_frequency = Some(read_be32_slice(&data[0..4]));
+                        }
+                    }
+                    "current-speed" => {
+                        if len >= 4 {
+                            node.current_speed = Some(read_be32_slice(&data[0..4]));
                         }
                     }
                     "riscv,ndev" => {

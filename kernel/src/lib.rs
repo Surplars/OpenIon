@@ -38,6 +38,7 @@ pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
     platform::set_config(config);
     kinfo!("config written");
     mm::init(&config);
+    P::init_memory();
     core_init();
     hv::init(cfg!(feature = "hypervisor"), false);
     kinfo!("kernel core init done");

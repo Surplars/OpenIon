@@ -23,6 +23,7 @@ static GLOBAL_ALLOCATOR: GlobalTlsfAlloc = GlobalTlsfAlloc::new();
 
 static FRAME_ALLOCATOR: Mutex<frame::FrameAllocator> = Mutex::new(frame::FrameAllocator::new());
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static TRANSLATION_ENABLED: AtomicBool = AtomicBool::new(false);
 static mut KERNEL_HEAP: HeapStorage = HeapStorage([0; KERNEL_HEAP_SIZE]);
 
 #[derive(Clone, Copy, Debug)]
@@ -125,6 +126,14 @@ pub fn stats() -> MmStats {
         object_pool_algorithm: "Slab",
         frame_algorithm: "Bitmap",
     }
+}
+
+pub fn set_translation_enabled() {
+    TRANSLATION_ENABLED.store(true, Ordering::Release);
+}
+
+pub fn translation_enabled() -> bool {
+    TRANSLATION_ENABLED.load(Ordering::Acquire)
 }
 
 pub fn alloc_frame() -> Option<PhysAddr> {

@@ -75,7 +75,11 @@ pub fn shell_main() -> ! {
 
     loop {
         let Some(c) = crate::driver::char::pop_from_rx_buf() else {
-            crate::arch::idle_hint();
+            if crate::driver::char::has_rx_poll_fn() {
+                core::hint::spin_loop();
+            } else {
+                crate::arch::idle_hint();
+            }
             continue;
         };
 
@@ -266,6 +270,7 @@ fn complete_command(
         "vm",
         "mount",
         "mem",
+        "cpuinfo",
         "tasks",
         "ps",
         "drivers",
@@ -522,6 +527,7 @@ fn execute_command(state: &mut ShellState, input: &str) {
         "vm" => cmd_vm(args),
         "mount" => cmd_mount(args),
         "mem" => cmd_mem(),
+        "cpuinfo" => cmd_cpuinfo(),
         "tasks" | "ps" => cmd_tasks(),
         "drivers" => cmd_drivers(),
         "term" => cmd_term(),
@@ -542,6 +548,7 @@ fn cmd_help() {
     kpln!("  clear             Clear screen");
     kpln!("  uptime            Show system uptime");
     kpln!("  mem               Show memory info");
+    kpln!("  cpuinfo           Show CPU and ISA info");
     kpln!("  tasks / ps        List running tasks");
     kpln!("  drivers           List registered drivers");
     kpln!("  term              List terminal devices");
@@ -639,6 +646,215 @@ fn cmd_mem() {
         stats.frames.free_pages * crate::mm::PAGE_SIZE / 1024,
     );
     kpln!("  object pools: {}", stats.object_pool_algorithm);
+}
+
+fn cmd_cpuinfo() {
+    let cfg = crate::platform::get_config();
+    let identity = collect_cpu_identity();
+
+    kpln!("CPU:");
+    kpln!("  vendor           : {}", identity.vendor_name());
+    kpln!("  model            : {}", identity.model_name());
+    match crate::log::cpu_id() {
+        Some(id) => kpln!("  current cpu      : {}", id),
+        None => kpln!("  current cpu      : unknown"),
+    }
+    let cpu_count = print_dtb_cpus();
+    kpln!("  possible cpus    : {}", cpu_count);
+    kpln!("  online cpus      : 1 (boot cpu only)");
+    kpln!(
+        "  arch             : {}",
+        if crate::generated_config::OPENION_RISCV_XLEN_64 {
+            "riscv64"
+        } else if crate::generated_config::OPENION_RISCV_XLEN_32 {
+            "riscv32"
+        } else {
+            "unknown"
+        }
+    );
+    kpln!(
+        "  privilege        : {}",
+        if crate::generated_config::OPENION_RISCV_S_MODE {
+            "S-mode"
+        } else if crate::generated_config::OPENION_RISCV_M_MODE {
+            "M-mode"
+        } else {
+            "unknown"
+        }
+    );
+    kpln!(
+        "  mmu              : {}",
+        if crate::mm::translation_enabled() {
+            "Sv32 identity active"
+        } else if crate::generated_config::OPENION_RISCV_SV32_MMU {
+            "Sv32 requested, inactive"
+        } else {
+            "disabled"
+        }
+    );
+    kp!(
+        "  isa              : rv{}",
+        if crate::generated_config::OPENION_RISCV_XLEN_64 {
+            64
+        } else {
+            32
+        }
+    );
+    if crate::generated_config::OPENION_RISCV_EXT_M {
+        kp!(" m");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_A {
+        kp!(" a");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_C {
+        kp!(" c");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_F {
+        kp!(" f");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_D {
+        kp!(" d");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_B {
+        kp!(" b");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_V {
+        kp!(" v");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_ZICSR {
+        kp!(" zicsr");
+    }
+    if crate::generated_config::OPENION_RISCV_EXT_ZIFENCEI {
+        kp!(" zifencei");
+    }
+    kpln!("");
+    if let Some(isa) = identity.fdt_isa {
+        kpln!("  fdt isa          : {}", isa);
+    }
+    kpln!("  cpu/timebase hz  : {}", cfg.cpu_freq_hz);
+    kpln!("  systick hz       : {}", cfg.systick_hz);
+    kpln!("  external irqs    : {}", cfg.external_irq_count);
+    kpln!(
+        "  memory           : {:#x}..{:#x} ({} KiB)",
+        cfg.memory_base,
+        cfg.memory_base + cfg.memory_size,
+        cfg.memory_size / 1024
+    );
+    kpln!("  kernel end       : {:#x}", cfg.kernel_end);
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    kpln!("  supervisor csrs  : not probed");
+}
+
+struct CpuIdentity {
+    root_model: Option<&'static str>,
+    root_compatible: Option<&'static str>,
+    fdt_isa: Option<&'static str>,
+}
+
+impl CpuIdentity {
+    fn vendor_name(&self) -> &'static str {
+        self.root_compatible
+            .and_then(vendor_from_compatible)
+            .or_else(|| self.root_model.and_then(vendor_from_compatible))
+            .unwrap_or("unknown")
+    }
+
+    fn model_name(&self) -> &'static str {
+        self.root_model
+            .and_then(model_from_string)
+            .or_else(|| self.root_compatible.and_then(model_from_string))
+            .or(self.root_model)
+            .or(self.root_compatible)
+            .unwrap_or("unknown")
+    }
+}
+
+fn collect_cpu_identity() -> CpuIdentity {
+    let dtb = crate::platform::dtb_addr();
+    if dtb == 0 {
+        return CpuIdentity {
+            root_model: None,
+            root_compatible: None,
+            fdt_isa: None,
+        };
+    }
+
+    let mut identity = CpuIdentity {
+        root_model: None,
+        root_compatible: None,
+        fdt_isa: None,
+    };
+
+    unsafe {
+        crate::fdt::walk_nodes(dtb, |node| {
+            if node.name().is_empty() {
+                identity.root_model = node.model();
+                identity.root_compatible = node.first_compatible();
+                return;
+            }
+
+            if identity.fdt_isa.is_none() && node.device_type() == Some("cpu") {
+                identity.fdt_isa = node.riscv_isa();
+            }
+        });
+    }
+
+    identity
+}
+
+fn vendor_from_compatible(value: &str) -> Option<&'static str> {
+    if value.starts_with("espressif,") || value.starts_with("esp,") {
+        Some("Espressif")
+    } else {
+        None
+    }
+}
+
+fn model_from_string(value: &str) -> Option<&'static str> {
+    if value.contains("esp32s31") {
+        Some("ESP32-S31")
+    } else {
+        None
+    }
+}
+
+fn print_dtb_cpus() -> usize {
+    let dtb = crate::platform::dtb_addr();
+    if dtb == 0 {
+        kpln!("  cpu list         : unknown");
+        return 1;
+    }
+
+    let mut cpus = [0usize; 8];
+    let mut count = 0usize;
+    unsafe {
+        crate::fdt::walk_nodes(dtb, |node| {
+            if count >= cpus.len() || !node.is_available() {
+                return;
+            }
+            if node.device_type() != Some("cpu") {
+                return;
+            }
+            if let Some(reg) = node.first_reg() {
+                cpus[count] = reg.base;
+                count += 1;
+            }
+        });
+    }
+
+    kp!("  cpu list         : ");
+    if count == 0 {
+        kpln!("none");
+        return 1;
+    }
+    for (i, cpu) in cpus.iter().take(count).enumerate() {
+        if i != 0 {
+            kp!(",");
+        }
+        kp!("{}", cpu);
+    }
+    kpln!(" ({})", count);
+    count
 }
 
 fn cmd_drivers() {

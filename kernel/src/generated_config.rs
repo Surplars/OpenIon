@@ -60,6 +60,9 @@ pub const OPENION_RISCV_M_MODE: bool = false;
 /// Physical load/link address for riscv-generic kernels. OpenSBI or the loader must jump here.
 pub const OPENION_RISCV_KERNEL_BASE: usize = 1342177280;
 
+/// Enable an early Sv32 identity map for RV32 S-mode kernels.
+pub const OPENION_RISCV_SV32_MMU: bool = true;
+
 /// Enable the RISC-V M extension. Disabling this builds closer to RV64IA/RV64IAC and may expose compiler/runtime assumptions.
 pub const OPENION_RISCV_EXT_M: bool = true;
 
@@ -92,6 +95,9 @@ pub const OPENION_RISCV_HYPERVISOR: bool = false;
 
 /// Enable the NS16550A UART driver crate for platforms that instantiate it.
 pub const OPENION_DRIVER_NS16550A: bool = false;
+
+/// Enable the ESP32-S31 UART driver crate for the S31 FDT boot path.
+pub const OPENION_DRIVER_ESP32S31_UART: bool = true;
 
 /// Enable the CMSDK UART driver crate for ARM MPS2-style platforms.
 pub const OPENION_DRIVER_CMSDK_UART: bool = false;

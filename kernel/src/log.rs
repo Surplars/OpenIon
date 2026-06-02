@@ -28,6 +28,10 @@ pub fn set_cpu_id_provider(provider: &'static (dyn CpuIdProvider + Sync)) {
     CPU_PROVIDER.call_once(|| provider);
 }
 
+pub fn cpu_id() -> Option<u32> {
+    CPU_PROVIDER.get().map(|provider| provider.cpu_id())
+}
+
 pub fn console() -> Option<&'static (dyn PlatformConsole + Sync)> {
     *CONSOLE.lock()
 }

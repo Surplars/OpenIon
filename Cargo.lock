@@ -539,6 +539,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32s31_uart"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+]
+
+[[package]]
 name = "euclid"
 version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1537,6 +1544,7 @@ version = "0.1.0"
 dependencies = [
  "app",
  "arch",
+ "esp32s31_uart",
  "kernel",
  "ns16550a",
  "spin",

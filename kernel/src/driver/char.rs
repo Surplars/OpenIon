@@ -101,6 +101,10 @@ pub fn set_rx_poll_fn(poll: fn() -> Option<u8>) {
     *RX_POLL_FN.lock() = Some(poll);
 }
 
+pub fn has_rx_poll_fn() -> bool {
+    RX_POLL_FN.lock().is_some()
+}
+
 pub fn push_to_rx_buf(byte: u8) {
     if UART_RX_BUF.push(byte) {
         #[cfg(feature = "async_rt")]
