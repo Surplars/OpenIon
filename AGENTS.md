@@ -3,7 +3,8 @@
 ## Project Overview
 
 OpenIon is a bare-metal RTOS in Rust. It uses `#![no_std]` and `#![no_main]`,
-has no host test suite, and currently runs on QEMU-emulated targets only.
+has no host test suite, currently runs on QEMU-emulated RISC-V/ARM targets,
+and has early STM32F103 hardware bring-up support.
 
 The long-term goal is a RISC-V Type-1 hypervisor. The current stable baseline is
 the RTOS kernel: scheduler, shell, VFS, VirtIO block I/O, driver framework,
@@ -16,10 +17,9 @@ make config
 make menuconfig
 make build PLAT=riscv-generic
 make build PLAT=qemu-an521
-make build PLAT=qemu-stm32l475
+make build PLAT=stm32f103-bluepill
 make run   PLAT=riscv-generic
 make run   PLAT=qemu-an521
-make run   PLAT=qemu-stm32l475
 ```
 
 - Never use `make run` in agent sessions. QEMU blocks the terminal and may not
@@ -44,10 +44,10 @@ make run   PLAT=qemu-stm32l475
 | `app` | `app/` | Root task and shell |
 | `riscv-generic` | `platform/riscv-generic/` | Generic RISC-V platform binary |
 | `an521` | `platform/qemu-an521/` | ARM Cortex-M33 platform binary |
-| `qemu-stm32l475` | `platform/qemu-stm32l475/` | STM32L475 QEMU platform binary |
+| `stm32f103-bluepill` | `platform/stm32f103-bluepill/` | STM32F103 Blue Pill hardware platform binary |
+| `bsp` | `bsp/` | Board support and MCU HAL bridge glue |
 | `ns16550a` | `drivers/ns16550a/` | NS16550A UART driver |
 | `cmsdk_uart` | `drivers/cmsdk_uart/` | CMSDK UART driver |
-| `stm32l4x5_usart` | `drivers/stm32l4x5_usart/` | STM32L4x5 USART driver |
 | `lan9118` | `drivers/lan9118/` | LAN9118 Ethernet driver |
 | `virtio_blk` | `drivers/virtio_blk/` | VirtIO MMIO block driver |
 | `bootloader` | `bootloader/` | Placeholder |
@@ -86,8 +86,9 @@ Keep these boundaries strict:
 |---|---|
 | `kernel/` | Platform-neutral and architecture-neutral kernel logic, traits, registries, scheduler, VFS, memory, logging, networking abstractions |
 | `arch/` | ISA and CPU details: assembly, CSR access, trap vectors, context switching, SBI helpers, ARM NVIC helpers |
-| `platform/` | Board/SoC details: MMIO base addresses, PLIC/CLINT wiring, startup assembly, linker scripts, platform driver instances |
-| `drivers/` | Device protocol implementation behind kernel driver traits |
+| `platform/` | Board/SoC binaries: startup assembly, linker scripts, platform memory and interrupt wiring, board driver instances |
+| `bsp/` | Board support and MCU HAL bridge glue: clocks, pinmux, vendor HAL adapters, MCU-specific console/IRQ setup |
+| `drivers/` | Reusable device protocol implementation behind kernel driver traits |
 | `app/` | Root task and user-facing kernel apps such as the shell |
 
 Do not put RISC-V CSR access or inline assembly in `kernel/` or platform code
@@ -99,12 +100,12 @@ into `arch/`; RISC-V platform discovery belongs in `platform/riscv-generic`.
 1. Platform startup assembly sets the initial stack and calls the Rust entry.
 2. Platform entry clears BSS, stores platform boot data such as `hartid` and
    DTB address, sets an early trap vector if needed, then calls
-   `kernel::boot::<Platform, Arch>(root_task)`.
+   `kernel::boot::<Platform, Arch>()`.
 3. `kernel::boot` initializes architecture hooks, runs `Platform::early_init`,
    prints the version banner, writes `PlatformConfig`, initializes memory and
    core kernel services, auto-probes FDT drivers, registers platform drivers,
-   initializes VFS and device files, initializes networking, spawns root tasks,
-   schedules the first task, and enters `Arch::start_first_task()`.
+   initializes VFS and device files, initializes networking, installs the kernel
+   root process, schedules the first task, and enters `Arch::start_first_task()`.
 
 ## RISC-V Mode Notes
 
@@ -137,15 +138,18 @@ for the SBI jump target.
 - Handlers call `kernel::irq::handle_irq(N)`, which dispatches the registered
   IRQ table entry.
 
-### STM32 `qemu-stm32l475`
+### STM32F103 `stm32f103-bluepill`
 
-- Targets QEMU machine `b-l475e-iot01a` with target triple
-  `thumbv7m-none-eabi`.
-- Uses the `mcu_profile` Cargo feature to shrink fixed-capacity kernel storage.
-- Platform code owns RCC, GPIO pinmux, linker script, startup vector, and NVIC
-  wiring. USART protocol implementation lives in `drivers/stm32l4x5_usart`.
-- QEMU STM32 peripheral coverage is partial. Treat this platform as a build and
-  portability smoke test until runtime shell I/O is manually validated.
+- Targets real STM32F103 Blue Pill-style hardware with target triple
+  `thumbv7m-none-eabi`; there is no QEMU runner for this platform.
+- Uses the `kernel/mcu_profile` Cargo feature to shrink fixed-capacity kernel
+  storage and disables heavyweight optional paths through `xtask` constraints.
+- `platform/stm32f103-bluepill` owns startup assembly, linker policy, and the
+  platform trait implementation. `bsp::arm::stm32f103` owns clocks, USART1
+  console setup, SysTick, NVIC wiring, and C HAL bridge exports.
+- Do not add STM32 family register wrappers under `drivers/`. Keep MCU-specific
+  HAL glue in `bsp/`, `platform/`, or the user project; reusable protocols may
+  live under `drivers/`.
 
 ## Driver Framework Rules
 
@@ -204,8 +208,9 @@ Important current behavior:
 
 ## Scheduler Baseline
 
-The scheduler has priority-aware ready queues and high-priority preemption
-points. Be careful around idle behavior:
+The scheduler has priority-aware ready queues, wait queues, high-priority
+preemption points, and optional SMP-oriented per-CPU storage. Be careful around
+idle behavior:
 
 - The idle task should spin, not repeatedly yield into a trap storm.
 - Shell no-input polling should spin, not sleep on a timer-dependent delay.
@@ -252,6 +257,7 @@ For a broad build check:
 ```bash
 make build PLAT=riscv-generic
 make build PLAT=qemu-an521
+make build PLAT=stm32f103-bluepill
 ```
 
 Do not run QEMU from an agent session. If runtime validation is needed, provide

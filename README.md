@@ -1,7 +1,8 @@
 # OpenIon
 
 OpenIon is a small bare-metal RTOS written in Rust. It is `no_std`, `no_main`,
-and currently targets QEMU-emulated RISC-V and ARM platforms.
+and currently targets QEMU-emulated RISC-V/ARM platforms plus early
+STM32F103 bare-metal bring-up.
 
 The long-term direction is a RISC-V Type-1 hypervisor, but the current stable
 focus is the kernel core: scheduler, shell, VFS, block I/O, driver framework,
@@ -13,11 +14,11 @@ memory management, and platform/architecture separation.
 |---|---|---|---|
 | `riscv-generic` | RISC-V `rv64imac`/`rv32imac` | `qemu-system-riscv{32,64} -machine virt` | `platform/riscv-generic` |
 | `qemu-an521` | ARM Cortex-M33 | `qemu-system-arm -M mps2-an521` | `platform/qemu-an521` |
-| `qemu-stm32l475` | ARM Cortex-M4 | `qemu-system-arm -M b-l475e-iot01a` | `platform/qemu-stm32l475` |
+| `stm32f103-bluepill` | ARM Cortex-M3 | hardware target, no QEMU runner | `platform/stm32f103-bluepill` |
 
-`riscv-generic` is also the current ESP32-S31 hardware bring-up target. On
-ESP32-S31 it expects OpenSBI to run in M-mode and to jump into an RV32 S-mode
-kernel linked at PSRAM address `0x50000000`.
+`riscv-generic` supports RV64 and RV32 S-mode boot on SBI firmware. It has
+PLIC and CLIC interrupt paths, DTB-driven memory/timer/IRQ discovery, and
+optional early Sv32/Sv39 identity maps.
 
 ## Prerequisites
 
@@ -35,18 +36,17 @@ make config
 make menuconfig
 make build PLAT=riscv-generic
 make build PLAT=qemu-an521
-make build PLAT=qemu-stm32l475
+make build PLAT=stm32f103-bluepill
 ```
 
-For ESP32-S31 hardware, configure the RISC-V platform as RV32 S-mode, enable the
-ESP32-S31 UART driver, and link the kernel at `0x50000000`. The active generated
-configuration currently uses:
+For RV32 S-mode hardware, configure the RISC-V platform as RV32 S-mode and set
+the kernel base to the firmware jump address. A typical OpenSBI `fw_jump` style
+configuration uses:
 
 ```text
 OPENION_RISCV_XLEN_32 = true
 OPENION_RISCV_S_MODE = true
 OPENION_RISCV_KERNEL_BASE = 0x50000000
-OPENION_DRIVER_ESP32S31_UART = true
 OPENION_RISCV_SV32_MMU = true
 ```
 
@@ -57,9 +57,9 @@ make build PLAT=riscv-generic
 rust-objcopy -O binary target/riscv32imac-unknown-none-elf/debug/riscv-generic rtos.bin
 ```
 
-The OpenIon ESP Bootloader loads that raw image from flash offset `0x00060000`
-to PSRAM `0x50000000`; OpenSBI should be built as `fw_jump` with
-`FW_JUMP_ADDR=0x50000000`.
+A board bootloader can load that raw image to the configured kernel base;
+OpenSBI should be built as `fw_jump` with `FW_JUMP_ADDR` matching
+`OPENION_RISCV_KERNEL_BASE`.
 
 The Makefile delegates to `xtask`, which first generates
 `kernel/src/generated_config.rs` from the Ionix schema and config files:
@@ -95,7 +95,6 @@ existing config.
 ```bash
 make run PLAT=riscv-generic
 make run PLAT=qemu-an521
-make run PLAT=qemu-stm32l475
 ```
 
 Use `Ctrl-A X` to exit QEMU in `-nographic` mode.
@@ -133,23 +132,25 @@ directories.
 | `kernel/` | Architecture-neutral kernel core: scheduler, IRQ table, memory, VFS, driver framework, networking framework, logging, versioning |
 | `arch/` | ISA/CPU-specific code: RISC-V traps, CSRs, context switch, SBI helpers, ARM Cortex-M context and NVIC/SysTick code |
 | `platform/` | Board/SoC binaries: linker scripts, startup assembly, platform MMIO addresses, PLIC/NVIC wiring, platform timers |
-| `drivers/` | Device driver crates: UART/USART, VirtIO block, LAN9118 Ethernet |
+| `bsp/` | Board support code and MCU HAL bridge glue that is too board-specific for reusable driver crates |
+| `drivers/` | Reusable device driver crates: UART protocols, VirtIO block/GPU/RNG, LAN9118 Ethernet |
 | `app/` | Root task and shell-facing application code |
 | `bootloader/` | Placeholder for future bootloader work |
 
 ## Current Kernel Features
 
 - Cooperative scheduler with priority-aware ready queues and high-priority
-  preemption points.
+  preemption points, wait queues, and optional SMP-oriented per-CPU storage.
 - Interactive shell using an IRQ producer and shell consumer UART RX path.
 - Ionix-generated configuration for platform constants, scheduler tick rate,
   IRQ table size, FDT auto-probing, built-in shell selection, RISC-V mode,
-  optional RISC-V ISA extension toggles, and network backend feature
-  selection.
+  optional RISC-V ISA extension toggles, optional Sv32/Sv39 MMU setup, SMP
+  limits, and network backend feature selection.
 - RAMFS-based VFS with stable `NodeId` handles.
 - Mount table snapshots to avoid printing or block I/O while holding locks.
 - Read-only exFAT mounting over VirtIO block on `riscv-generic`.
-- Driver registry with snapshot APIs and FDT auto-probing.
+- Driver registry with snapshot APIs, class registration, factory-based probing,
+  and FDT auto-probing.
 - Fixed-capacity structures on core paths for MCU compatibility.
 - RISC-V S-mode boot on RustSBI/OpenSBI-style firmware by default.
 
@@ -172,33 +173,35 @@ The driver manager provides snapshots for iteration and IRQ dispatch so callers
 do not print, call back into drivers, or perform block I/O while holding the
 registry lock.
 
-## STM32 Notes
+## MCU And STM32 Notes
 
-QEMU includes several STM32-class boards, but peripheral coverage is partial.
-The `qemu-stm32l475` platform targets `b-l475e-iot01a` as a small MCU profile:
-it disables heavyweight optional paths and uses reduced fixed-capacity kernel
-structures. The first supported device is USART1 through
-`drivers/stm32l4x5_usart`; GPIO framework support exists in the kernel, but
-QEMU STM32 GPIO behavior should be treated as a portability smoke test rather
-than complete hardware validation.
+MCU-specific peripherals are not placed in `drivers/` unless the implementation
+is reusable across boards. Pinmux, clocks, reset policy, DMA, vendor HAL
+selection, and C HAL adapters belong in `bsp/`, `platform/`, or the user
+project.
+
+The current STM32 path is `stm32f103-bluepill`. It is a buildable hardware
+bring-up target using `thumbv7m-none-eabi`, a Cortex-M startup file, a small
+linker script, and `bsp::arm::stm32f103` for clock setup, USART1 console,
+SysTick, IRQ wiring, and C HAL bridge functions. See
+`docs/mcu-hal-integration.md` for the intended STM32Cube HAL integration model.
 
 ## RISC-V Notes
 
-`riscv-generic` defaults to `s-mode`. The platform receives `hartid` and
-`dtb_pa` from firmware; if no DTB address is provided, it falls back to the
-DTB address configured in `.config.toml`.
+`riscv-generic` defaults to `s-mode`. The boot HART policy is intentionally
+hart0-first so firmware setups that choose a different boot HART do not start
+multiple kernel instances. The platform receives `hartid` and `dtb_pa` from
+firmware; if no DTB address is provided, it falls back to the DTB address
+configured in `.config.toml`.
 
 RISC-V CSR access, SBI calls, trap setup, and timer interrupt enables live under
 `arch/src/riscv`. QEMU virt MMIO details such as PLIC and CLINT addresses remain
 under `platform/riscv-generic`.
 
-The schema also exposes the RISC-V compressed-instruction toggle, so the
-platform can be built as IMA-only when needed.
-
-On ESP32-S31, `riscv-generic` discovers UART, CLIC, timer, memory and CPU
-metadata from the DTB passed by OpenSBI. The ESP32-S31 path currently supports
-interactive UART input/output, CLIC external interrupt dispatch, CPU reporting
-through `cpuinfo`, and an optional early Sv32 identity map for S-mode kernels.
+The schema also exposes the RISC-V compressed-instruction toggle, optional
+SMP, and optional early Sv32/Sv39 identity maps. CLIC support is kept under the
+RISC-V architecture/platform boundary; board-specific device policy stays in
+`platform/riscv-generic`.
 
 ## Hypervisor Status
 
