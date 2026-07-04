@@ -54,7 +54,7 @@ impl Driver for Lan9118 {
     }
 
     fn name(&self) -> &'static str {
-        "LAN9118 Ethernet Controller"
+        "lan9118"
     }
 
     fn init(&self) -> DriverResult<()> {

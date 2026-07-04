@@ -223,7 +223,7 @@ impl VirtioGpu {
         self.transport.set_status_bits(status::DRIVER_OK);
         self.clear(0xff00_0000)?;
         kernel::kinfo!(
-            "VirtIO GPU: {}x{} scanout {}",
+            "virtio_gpu: {}x{} scanout {}",
             self.width,
             self.height,
             self.scanout_id
@@ -445,7 +445,7 @@ impl Driver for VirtioGpu {
     }
 
     fn name(&self) -> &'static str {
-        "VirtIO GPU"
+        "virtio_gpu"
     }
 
     fn init(&self) -> DriverResult<()> {

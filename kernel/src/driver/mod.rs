@@ -94,6 +94,19 @@ impl DeviceConfig for GenericDeviceConfig {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct DeviceClass: u32 {
+        const BLOCK = 1 << 0;
+        const CHAR = 1 << 1;
+        const TERMINAL = 1 << 2;
+        const GPIO = 1 << 3;
+        const FRAMEBUFFER = 1 << 4;
+        const NET = 1 << 5;
+        const RNG = 1 << 6;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceState {
     Uninitialized = 0,

@@ -153,13 +153,13 @@ impl Driver for Ns16550a {
     }
 
     fn name(&self) -> &'static str {
-        "NS16550A UART"
+        "ns16550a_uart"
     }
 
     fn init(&self) -> DriverResult<()> {
         self.init_hw();
         self.set_active();
-        kernel::kinfo!("NS16550A UART initialized with RX interrupt enabled");
+        kernel::kinfo!("ns16550a_uart: initialized with rx interrupt enabled");
         Ok(())
     }
 

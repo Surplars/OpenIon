@@ -95,7 +95,7 @@ impl RxBuffer {
 static UART_RX_BUF: RxBuffer = RxBuffer::new();
 static RX_POLL_FN: Mutex<Option<fn() -> Option<u8>>> = Mutex::new(None);
 #[cfg(feature = "async_rt")]
-static RX_EVENT: crate::sched::async_rt::AsyncEvent = crate::sched::async_rt::AsyncEvent::new();
+static RX_EVENT: crate::sched::Event<1> = crate::sched::Event::new();
 
 pub fn set_rx_poll_fn(poll: fn() -> Option<u8>) {
     *RX_POLL_FN.lock() = Some(poll);
@@ -130,18 +130,18 @@ pub fn pop_from_rx_buf() -> Option<u8> {
 #[cfg(feature = "async_rt")]
 pub fn read_byte_async() -> ReadByte {
     ReadByte {
-        wait: RX_EVENT.wait(),
+        wait: RX_EVENT.wait_async(),
     }
 }
 
 #[cfg(feature = "async_rt")]
-pub fn wait_rx_async() -> crate::sched::async_rt::EventWait<'static> {
-    RX_EVENT.wait()
+pub fn wait_rx_async() -> crate::sched::wait::EventWait<'static, 1> {
+    RX_EVENT.wait_async()
 }
 
 #[cfg(feature = "async_rt")]
 pub struct ReadByte {
-    wait: crate::sched::async_rt::EventWait<'static>,
+    wait: crate::sched::wait::EventWait<'static, 1>,
 }
 
 #[cfg(feature = "async_rt")]
@@ -158,7 +158,7 @@ impl Future for ReadByte {
                 if let Some(byte) = pop_from_rx_buf() {
                     Poll::Ready(byte)
                 } else {
-                    self.wait = RX_EVENT.wait();
+                    self.wait = RX_EVENT.wait_async();
                     Poll::Pending
                 }
             }

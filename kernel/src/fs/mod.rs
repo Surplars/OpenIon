@@ -298,16 +298,14 @@ fn find_block_device(dev_path: &str) -> Option<&'static crate::driver::block::Dy
 
     let mut idx = 0usize;
     let mut found: Option<&'static crate::driver::block::DynBlockDevice> = None;
-    crate::driver::manager::DriverManager::for_each_driver(|drv| {
+    crate::driver::manager::DriverManager::for_each_block_device(|blk_dev| {
         if found.is_some() {
             return;
         }
-        if let Some(blk_dev) = drv.as_block_device() {
-            if idx == wanted_idx {
-                found = Some(blk_dev);
-            } else {
-                idx += 1;
-            }
+        if idx == wanted_idx {
+            found = Some(blk_dev);
+        } else {
+            idx += 1;
         }
     });
     found

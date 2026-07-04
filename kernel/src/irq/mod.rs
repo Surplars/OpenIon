@@ -2,7 +2,7 @@ use crate::sync::Mutex;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 type IrqHandler = fn();
-pub const MAX_EXTERNAL_IRQS: usize = 64;
+pub const MAX_EXTERNAL_IRQS: usize = crate::generated_config::OPENION_EXTERNAL_IRQ_COUNT;
 
 struct IrqState {
     count: usize,
@@ -98,11 +98,7 @@ pub fn handle_irq(irqn: usize) -> bool {
 
     #[cfg(target_arch = "arm")]
     if crate::sched::Scheduler::schedule_if_preempt_pending() {
-        unsafe {
-            if let Some(yield_fn) = crate::arch::YIELD_CPU_FN {
-                yield_fn();
-            }
-        }
+        crate::arch::yield_cpu();
     }
 
     handled

@@ -8,7 +8,6 @@ use kernel::driver::{
     DeviceConfig, DeviceResource, Driver, DriverErr, DriverFactory, DriverResult,
     GenericDeviceConfig, StaticDriverPool,
 };
-use kernel::kinfo;
 use volatile_register::RW;
 
 #[repr(C)]
@@ -61,7 +60,7 @@ impl Driver for CmsdkUart {
     }
 
     fn name(&self) -> &'static str {
-        "CMSDK UART"
+        "cmsdk_uart"
     }
 
     fn init(&self) -> DriverResult<()> {
@@ -72,11 +71,6 @@ impl Driver for CmsdkUart {
                 .ctrl
                 .write(UartCtrl::TXEN.bits() | UartCtrl::RXEN.bits() | UartCtrl::RXIEN.bits());
         }
-
-        kinfo!("CMSDK UART initialized with RX interrupt enabled");
-        kernel::irq::add_irq_handler(self.irq_num as usize, || {
-            kernel::driver::manager::DriverManager::dispatch_irq(0);
-        });
 
         DriverResult::Ok(())
     }

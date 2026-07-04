@@ -78,7 +78,7 @@ impl VirtioRng {
         }
 
         self.transport.set_status_bits(status::DRIVER_OK);
-        kernel::kinfo!("VirtIO RNG initialized");
+        kernel::kinfo!("virtio_rng: initialized");
         Ok(())
     }
 
@@ -137,7 +137,7 @@ impl Driver for VirtioRng {
     }
 
     fn name(&self) -> &'static str {
-        "VirtIO RNG"
+        "virtio_rng"
     }
 
     fn init(&self) -> DriverResult<()> {

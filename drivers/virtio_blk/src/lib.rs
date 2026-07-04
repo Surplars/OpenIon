@@ -219,7 +219,7 @@ impl Driver for VirtioBlk {
     }
 
     fn name(&self) -> &'static str {
-        "VirtIO Block"
+        "virtio_blk"
     }
 
     fn init(&self) -> DriverResult<()> {
@@ -307,7 +307,7 @@ impl VirtioBlk {
         self.read_capacity();
 
         kernel::kinfo!(
-            "VirtIO Blk: {} sectors ({} MB)",
+            "virtio_blk: {} sectors ({} MiB)",
             self.capacity,
             self.capacity * 512 / 1024 / 1024
         );
