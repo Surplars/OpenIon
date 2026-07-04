@@ -1,19 +1,9 @@
+/// CLIC platform configuration layer.
+///
+/// This module handles platform-specific CLIC initialization and IRQ dispatch.
+/// The low-level register access is provided by `arch::riscv::clic::Clic`.
+use arch::riscv::clic::Clic;
 use core::sync::atomic::{AtomicUsize, Ordering};
-
-#[cfg(feature = "m-mode")]
-const CLICCFG_OFFSET: usize = 0x0000;
-#[cfg(feature = "m-mode")]
-const CLICINT_BASE: usize = 0x1000;
-#[cfg(feature = "m-mode")]
-const CLICINT_STRIDE: usize = 4;
-#[cfg(feature = "m-mode")]
-const CLICINTIP: usize = 0;
-#[cfg(feature = "m-mode")]
-const CLICINTIE: usize = 1;
-#[cfg(feature = "m-mode")]
-const CLICINTATTR: usize = 2;
-#[cfg(feature = "m-mode")]
-const CLICINTCTL: usize = 3;
 
 static CLIC_BASE: AtomicUsize = AtomicUsize::new(0);
 static IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -36,13 +26,21 @@ pub fn configure(base: usize, irq_count: usize) {
     IRQ_COUNT.store(irq_count, Ordering::Release);
 }
 
+fn clic() -> Option<Clic> {
+    let base = CLIC_BASE.load(Ordering::Acquire);
+    if base == 0 {
+        None
+    } else {
+        Some(Clic::new(base))
+    }
+}
+
 pub fn is_configured() -> bool {
     CLIC_BASE.load(Ordering::Acquire) != 0
 }
 
 pub fn init() {
-    let base = CLIC_BASE.load(Ordering::Acquire);
-    if base == 0 {
+    if clic().is_none() {
         kernel::kwarn!("CLIC: no interrupt controller found in DTB");
         return;
     }
@@ -55,15 +53,13 @@ pub fn init() {
 
     #[cfg(feature = "m-mode")]
     {
+        let clic = clic().unwrap();
         // nlbits=0 keeps all enabled sources at one privilege level and direct trap entry.
-        write_u8(base + CLICCFG_OFFSET, 0);
+        clic.set_config(0);
 
         let irq_count = IRQ_COUNT.load(Ordering::Acquire).min(u32::MAX as usize);
         for irq in 1..irq_count {
-            let reg = base + CLICINT_BASE + irq * CLICINT_STRIDE;
-            write_u8(reg + CLICINTATTR, 0);
-            write_u8(reg + CLICINTCTL, 0xff);
-            write_u8(reg + CLICINTIE, 1);
+            clic.init_irq(irq as u32);
         }
     }
 }
@@ -73,7 +69,7 @@ pub fn handle_irq(irq: u32) {
         return;
     }
 
-    let _ = kernel::driver::manager::DriverManager::dispatch_irq(irq);
+    kernel::irq::handle_irq(irq as usize);
 
     #[cfg(feature = "s-mode")]
     {
@@ -82,17 +78,8 @@ pub fn handle_irq(irq: u32) {
 
     #[cfg(feature = "m-mode")]
     {
-        let base = CLIC_BASE.load(Ordering::Acquire);
-        if base != 0 {
-            let pending = base + CLICINT_BASE + irq as usize * CLICINT_STRIDE + CLICINTIP;
-            write_u8(pending, 0);
+        if let Some(clic) = clic() {
+            clic.clear_pending(irq);
         }
-    }
-}
-
-#[cfg(feature = "m-mode")]
-fn write_u8(addr: usize, value: u8) {
-    unsafe {
-        (addr as *mut u8).write_volatile(value);
     }
 }

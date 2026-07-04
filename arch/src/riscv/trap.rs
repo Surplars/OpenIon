@@ -86,9 +86,7 @@ pub struct TrapFrame {
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
     // Hardware disabled irqs. Ensure kernel tracking logic knows we are in a critical section.
-    unsafe {
-        kernel::arch::ARCH_CRIT_NEST += 1;
-    }
+    kernel::arch::enter_critical();
 
     #[cfg(feature = "m-mode")]
     let raw_cause = read_mcause();
@@ -144,7 +142,7 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
             == riscv::register::scause::Trap::Interrupt(
                 riscv::register::scause::Interrupt::SupervisorExternal,
             );
-        let has_id_handler = unsafe { kernel::arch::EXTERNAL_IRQ_ID_HANDLER }.is_some();
+        let has_id_handler = kernel::arch::external_irq_id_handler().is_some();
         let is_clic_interrupt = has_id_handler && is_interrupt && interrupt_id != 1 && !is_timer;
         is_standard_external || is_clic_interrupt
     };
@@ -169,9 +167,7 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
         kernel::sched::async_rt::tick_update();
         kernel::sched::Scheduler::schedule();
 
-        unsafe {
-            kernel::arch::ARCH_CRIT_NEST -= 1;
-        }
+        kernel::arch::exit_critical();
         return;
     }
 
@@ -179,9 +175,7 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
         tf.epc += instruction_len(tf.epc);
         kernel::sched::Scheduler::schedule();
 
-        unsafe {
-            kernel::arch::ARCH_CRIT_NEST -= 1;
-        }
+        kernel::arch::exit_critical();
         return;
     }
 
@@ -197,22 +191,18 @@ pub extern "C" fn rust_trap_handler(tf: &mut TrapFrame) {
             kernel::sched::Scheduler::schedule_if_preempt_pending();
         }
 
-        unsafe {
-            kernel::arch::ARCH_CRIT_NEST -= 1;
-        }
+        kernel::arch::exit_critical();
         return;
     }
 
     if is_external {
-        if let Some(handler) = unsafe { kernel::arch::EXTERNAL_IRQ_ID_HANDLER } {
+        if let Some(handler) = kernel::arch::external_irq_id_handler() {
             handler(interrupt_id as u32);
-        } else if let Some(handler) = unsafe { kernel::arch::EXTERNAL_IRQ_HANDLER } {
+        } else if let Some(handler) = kernel::arch::external_irq_handler() {
             handler();
         }
         kernel::sched::Scheduler::schedule_if_preempt_pending();
-        unsafe {
-            kernel::arch::ARCH_CRIT_NEST -= 1;
-        }
+        kernel::arch::exit_critical();
         return;
     }
 

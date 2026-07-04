@@ -1,8 +1,10 @@
+pub mod clic;
 pub mod clint;
 pub mod context;
 #[cfg(feature = "hypervisor")]
 pub mod hypervisor;
 pub mod irq;
+pub mod mmu;
 pub mod plic;
 pub mod pmp;
 pub mod sbi;
@@ -53,5 +55,14 @@ impl kernel::arch::Arch for RiscvArch {
     fn start_first_task() -> ! {
         trap::init(); // Initialize trap handler vector before starting first task
         context::start_first_task();
+    }
+
+    fn current_cpu_id() -> u32 {
+        // Read hartid from tp register (set during boot in startup.s)
+        let id: usize;
+        unsafe {
+            core::arch::asm!("mv {}, tp", out(reg) id, options(nomem, nostack, preserves_flags));
+        }
+        id as u32
     }
 }

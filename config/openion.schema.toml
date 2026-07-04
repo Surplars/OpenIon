@@ -29,6 +29,23 @@ default = 32
 help = "Maximum number of scheduler task control blocks."
 rebuild = true
 
+[[menus.items]]
+name = "Enable SMP"
+key = "OPENION_SMP"
+type = "bool"
+default = false
+help = "Enable symmetric multi-processing support. When disabled, the scheduler uses a single global run queue."
+rebuild = true
+
+[[menus.items]]
+name = "Max CPUs"
+key = "OPENION_SMP_MAX_CPUS"
+type = "usize"
+default = 4
+depends_on = ["OPENION_SMP"]
+help = "Maximum number of CPUs supported. Per-CPU data structures are allocated for this many CPUs."
+rebuild = true
+
 [[menus]]
 name = "Task Stacks"
 key = "KERNEL_TASK_STACKS"
@@ -251,6 +268,15 @@ depends_on = ["OPENION_RISCV_XLEN_32", "OPENION_RISCV_S_MODE"]
 help = "Enable an early Sv32 identity map for RV32 S-mode kernels."
 rebuild = true
 
+[[menus.items]]
+name = "RISC-V Sv39 MMU"
+key = "OPENION_RISCV_SV39_MMU"
+type = "bool"
+default = false
+depends_on = ["OPENION_RISCV_XLEN_64", "OPENION_RISCV_S_MODE"]
+help = "Enable an early Sv39 identity map for RV64 S-mode kernels."
+rebuild = true
+
 [[menus]]
 name = "ISA Extensions"
 key = "ARCH_RISCV_ISA"
@@ -360,13 +386,6 @@ default = true
 help = "Enable the NS16550A UART driver crate for platforms that instantiate it."
 rebuild = true
 
-[[menus.items]]
-name = "ESP32-S31 UART Driver"
-key = "OPENION_DRIVER_ESP32S31_UART"
-type = "bool"
-default = false
-help = "Enable the ESP32-S31 UART driver crate for the S31 FDT boot path."
-rebuild = true
 
 [[menus.items]]
 name = "CMSDK UART Driver"
@@ -376,13 +395,6 @@ default = true
 help = "Enable the CMSDK UART driver crate for ARM MPS2-style platforms."
 rebuild = true
 
-[[menus.items]]
-name = "STM32L4x5 USART Driver"
-key = "OPENION_DRIVER_STM32L4X5_USART"
-type = "bool"
-default = true
-help = "Enable the STM32L4x5 USART driver crate for QEMU STM32L475 and STM32L4-style platforms."
-rebuild = true
 
 [[menus]]
 name = "VirtIO Transport"

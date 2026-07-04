@@ -9,6 +9,12 @@ pub const OPENION_SYSTICK_HZ: u32 = 1000;
 /// Maximum number of scheduler task control blocks.
 pub const OPENION_TASK_CAP: usize = 32;
 
+/// Enable symmetric multi-processing support. When disabled, the scheduler uses a single global run queue.
+pub const OPENION_SMP: bool = false;
+
+/// Maximum number of CPUs supported. Per-CPU data structures are allocated for this many CPUs.
+pub const OPENION_SMP_MAX_CPUS: usize = 4;
+
 /// Root task stack capacity measured in machine words.
 pub const OPENION_ROOT_STACK_WORDS: usize = 1024;
 
@@ -46,10 +52,10 @@ pub const OPENION_FDT_AUTO_PROBE: bool = true;
 pub const OPENION_EXTERNAL_IRQ_COUNT: usize = 64;
 
 /// Build RISC-V code for a 64-bit hart and Sv39-capable address space.
-pub const OPENION_RISCV_XLEN_64: bool = false;
+pub const OPENION_RISCV_XLEN_64: bool = true;
 
 /// Build RISC-V code for a 32-bit hart and Sv32-capable address space.
-pub const OPENION_RISCV_XLEN_32: bool = true;
+pub const OPENION_RISCV_XLEN_32: bool = false;
 
 /// Build RISC-V code for Supervisor mode on SBI firmware.
 pub const OPENION_RISCV_S_MODE: bool = true;
@@ -58,10 +64,13 @@ pub const OPENION_RISCV_S_MODE: bool = true;
 pub const OPENION_RISCV_M_MODE: bool = false;
 
 /// Physical load/link address for riscv-generic kernels. OpenSBI or the loader must jump here.
-pub const OPENION_RISCV_KERNEL_BASE: usize = 1342177280;
+pub const OPENION_RISCV_KERNEL_BASE: usize = 2149580800;
 
 /// Enable an early Sv32 identity map for RV32 S-mode kernels.
-pub const OPENION_RISCV_SV32_MMU: bool = true;
+pub const OPENION_RISCV_SV32_MMU: bool = false;
+
+/// Enable an early Sv39 identity map for RV64 S-mode kernels.
+pub const OPENION_RISCV_SV39_MMU: bool = true;
 
 /// Enable the RISC-V M extension. Disabling this builds closer to RV64IA/RV64IAC and may expose compiler/runtime assumptions.
 pub const OPENION_RISCV_EXT_M: bool = true;
@@ -94,34 +103,28 @@ pub const OPENION_RISCV_EXT_ZIFENCEI: bool = true;
 pub const OPENION_RISCV_HYPERVISOR: bool = false;
 
 /// Enable the NS16550A UART driver crate for platforms that instantiate it.
-pub const OPENION_DRIVER_NS16550A: bool = false;
-
-/// Enable the ESP32-S31 UART driver crate for the S31 FDT boot path.
-pub const OPENION_DRIVER_ESP32S31_UART: bool = true;
+pub const OPENION_DRIVER_NS16550A: bool = true;
 
 /// Enable the CMSDK UART driver crate for ARM MPS2-style platforms.
 pub const OPENION_DRIVER_CMSDK_UART: bool = false;
-
-/// Enable the STM32L4x5 USART driver crate for QEMU STM32L475 and STM32L4-style platforms.
-pub const OPENION_DRIVER_STM32L4X5_USART: bool = false;
 
 /// Allow legacy VirtIO MMIO devices. Modern VERSION_1 devices remain preferred.
 pub const OPENION_VIRTIO_MMIO_LEGACY: bool = false;
 
 /// Enable the VirtIO MMIO block driver.
-pub const OPENION_DRIVER_VIRTIO_BLK: bool = false;
+pub const OPENION_DRIVER_VIRTIO_BLK: bool = true;
 
 /// Maximum polling iterations for one synchronous VirtIO block request before returning an error.
 pub const OPENION_VIRTIO_BLK_POLL_LIMIT: usize = 2000000;
 
 /// Enable the VirtIO MMIO GPU driver and expose it as a framebuffer device.
-pub const OPENION_DRIVER_VIRTIO_GPU: bool = false;
+pub const OPENION_DRIVER_VIRTIO_GPU: bool = true;
 
 /// Maximum polling iterations for one synchronous VirtIO GPU control request before returning an error.
 pub const OPENION_VIRTIO_GPU_POLL_LIMIT: usize = 2000000;
 
 /// Enable the VirtIO MMIO entropy driver for platforms that expose virtio-rng devices.
-pub const OPENION_DRIVER_VIRTIO_RNG: bool = false;
+pub const OPENION_DRIVER_VIRTIO_RNG: bool = true;
 
 /// Enable the LAN9118 Ethernet driver.
 pub const OPENION_DRIVER_LAN9118: bool = false;

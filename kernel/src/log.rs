@@ -5,6 +5,18 @@ pub trait PlatformConsole {
     fn putc(&self, ch: u8);
 }
 
+pub struct FunctionConsole {
+    pub putc_fn: fn(u8),
+}
+
+unsafe impl Sync for FunctionConsole {}
+
+impl PlatformConsole for FunctionConsole {
+    fn putc(&self, ch: u8) {
+        (self.putc_fn)(ch);
+    }
+}
+
 pub trait CpuIdProvider {
     fn cpu_id(&self) -> u32;
 }

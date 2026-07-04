@@ -4,6 +4,8 @@ use core::ptr;
 use kernel::mm::addr::{PAGE_SHIFT, PAGE_SIZE, PhysAddr, VirtAddr};
 use kernel::mm::{MemPerms, MmError};
 
+use super::mmu::RiscvPageTable;
+
 const PTE_V: u32 = 1 << 0;
 const PTE_R: u32 = 1 << 1;
 const PTE_W: u32 = 1 << 2;
@@ -199,8 +201,144 @@ impl Sv32PageTable {
     /// Only safe when running on RV32 S-mode with Sv32.
     pub unsafe fn activate_satp(&self) {
         unsafe {
+            // Ensure all previous memory operations are visible before changing satp
+            core::arch::asm!("fence rw, rw");
             core::arch::asm!("csrw satp, {}", in(reg) self.satp_value());
+            // Flush TLB to ensure new page table takes effect
             core::arch::asm!("sfence.vma");
+            // Ensure the new address mapping is active before continuing
+            core::arch::asm!("fence.i");
         }
+    }
+}
+
+impl RiscvPageTable for Sv32PageTable {
+    fn new(root: PhysAddr) -> Self {
+        Self { root }
+    }
+
+    fn root_addr(&self) -> PhysAddr {
+        self.root
+    }
+
+    fn satp_value(&self) -> usize {
+        let ppn = self.root.raw() >> PAGE_SHIFT;
+        (1usize << 31) | (ppn & PPN_MASK)
+    }
+
+    fn map_page(
+        &mut self,
+        vaddr: VirtAddr,
+        paddr: PhysAddr,
+        perms: MemPerms,
+        alloc: &mut dyn FnMut() -> Option<PhysAddr>,
+    ) -> Result<(), MmError> {
+        if !vaddr.is_aligned(PAGE_SIZE) || !paddr.is_aligned(PAGE_SIZE) {
+            return Err(MmError::InvalidAlignment);
+        }
+
+        let vpn = [(vaddr.raw() >> 12) & 0x3ff, (vaddr.raw() >> 22) & 0x3ff];
+        let ppn = paddr.raw() >> PAGE_SHIFT;
+        let pte_bits = perms_to_pte_bits(perms);
+
+        let mut table = self.root_table();
+        for level in (1..LEVELS).rev() {
+            let idx = vpn[level];
+            if !table.is_valid(idx) {
+                let new_page = alloc().ok_or(MmError::OutOfMemory)?;
+                unsafe {
+                    ptr::write_bytes(new_page.as_mut_ptr::<u8>(), 0, PAGE_SIZE);
+                }
+                let child_ppn = new_page.raw() >> PAGE_SHIFT;
+                table.set_entry(idx, PTE_V | (((child_ppn & PPN_MASK) as u32) << 10));
+                table = unsafe { &mut *(new_page.as_mut_ptr()) };
+            } else if table.is_leaf(idx) {
+                return Err(MmError::AlreadyMapped);
+            } else {
+                let child_pa = PhysAddr::new(table.ppn(idx) << PAGE_SHIFT);
+                table = unsafe { &mut *(child_pa.as_mut_ptr()) };
+            }
+        }
+
+        let idx = vpn[0];
+        if table.is_valid(idx) {
+            return Err(MmError::AlreadyMapped);
+        }
+        table.set_entry(idx, pte_bits | (((ppn & PPN_MASK) as u32) << 10));
+        Ok(())
+    }
+
+    fn unmap_page(&mut self, vaddr: VirtAddr) -> Result<PhysAddr, MmError> {
+        if !vaddr.is_aligned(PAGE_SIZE) {
+            return Err(MmError::InvalidAlignment);
+        }
+
+        let vpn = [(vaddr.raw() >> 12) & 0x3ff, (vaddr.raw() >> 22) & 0x3ff];
+
+        let mut table = self.root_table();
+        for level in (1..LEVELS).rev() {
+            let idx = vpn[level];
+            if !table.is_valid(idx) {
+                return Err(MmError::NotMapped);
+            }
+            let child_pa = PhysAddr::new(table.ppn(idx) << PAGE_SHIFT);
+            table = unsafe { &mut *(child_pa.as_mut_ptr()) };
+        }
+
+        let idx = vpn[0];
+        if !table.is_valid(idx) {
+            return Err(MmError::NotMapped);
+        }
+        let paddr = PhysAddr::new(table.ppn(idx) << PAGE_SHIFT);
+        table.set_entry(idx, 0);
+        Ok(paddr)
+    }
+
+    fn translate(&self, vaddr: VirtAddr) -> Option<PhysAddr> {
+        let vpn = [(vaddr.raw() >> 12) & 0x3ff, (vaddr.raw() >> 22) & 0x3ff];
+
+        let mut table = self.root_table();
+        for level in (1..LEVELS).rev() {
+            let idx = vpn[level];
+            if !table.is_valid(idx) {
+                return None;
+            }
+            if table.is_leaf(idx) {
+                return None;
+            }
+            let child_pa = PhysAddr::new(table.ppn(idx) << PAGE_SHIFT);
+            table = unsafe { &mut *(child_pa.as_mut_ptr()) };
+        }
+
+        let idx = vpn[0];
+        if !table.is_valid(idx) {
+            return None;
+        }
+        let offset = vaddr.raw() & (PAGE_SIZE - 1);
+        Some(PhysAddr::new((table.ppn(idx) << PAGE_SHIFT) | offset))
+    }
+
+    unsafe fn activate_satp(&self) {
+        unsafe {
+            // Ensure all previous memory operations are visible before changing satp
+            core::arch::asm!("fence rw, rw");
+            core::arch::asm!("csrw satp, {}", in(reg) self.satp_value());
+            // Flush TLB to ensure new page table takes effect
+            core::arch::asm!("sfence.vma");
+            // Ensure the new address mapping is active before continuing
+            core::arch::asm!("fence.i");
+        }
+    }
+
+    fn mode_name(&self) -> &'static str {
+        "Sv32"
+    }
+
+    fn levels(&self) -> usize {
+        LEVELS
+    }
+
+    fn va_bits(&self) -> usize {
+        32
     }
 }

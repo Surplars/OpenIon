@@ -6,14 +6,14 @@ pub mod mmu;
 pub mod plic;
 pub mod timer;
 
-#[cfg(feature = "driver_esp32s31_uart")]
-use esp32s31_uart::Esp32s31UartFactory;
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use kernel::driver::manager::{AnyDriver, DriverManager};
 use kernel::driver::net::DynNetDevice;
-use kernel::log::{CpuIdProvider, PlatformConsole, set_console, set_cpu_id_provider};
-use kernel::platform::{Platform, PlatformConfig};
+use kernel::log::{CpuIdProvider, FunctionConsole, set_console, set_cpu_id_provider};
+use kernel::platform::{Platform, PlatformConfig, SmpStatus};
 #[cfg(feature = "driver_ns16550a")]
 use ns16550a::Ns16550aFactory;
+use spin::Once;
 #[cfg(feature = "driver_virtio_blk")]
 use virtio_blk::VirtioBlkFactory;
 #[cfg(feature = "driver_virtio_gpu")]
@@ -30,6 +30,12 @@ const FALLBACK_EXTERNAL_IRQ_COUNT: usize = 64;
 const DEFAULT_DTB_ADDR: usize = 0x8006_8000;
 
 static PLATFORM_DRIVERS: [&'static dyn AnyDriver; 0] = [];
+static DTB_INFO: Once<RiscvDtbInfo> = Once::new();
+static ONLINE_HART_MASK: AtomicUsize = AtomicUsize::new(0);
+static PARKED_HART_MASK: AtomicUsize = AtomicUsize::new(0);
+static SMP_START_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+static SMP_START_FAILURES: AtomicU32 = AtomicU32::new(0);
+static BOOT_HART: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Copy)]
 struct RiscvDtbInfo {
@@ -82,23 +88,21 @@ impl RiscvCpuId {
 
 impl CpuIdProvider for RiscvCpuId {
     fn cpu_id(&self) -> u32 {
-        self.hartid.load(core::sync::atomic::Ordering::Relaxed)
+        if kernel::generated_config::OPENION_SMP {
+            <arch::riscv::RiscvArch as kernel::arch::Arch>::current_cpu_id()
+        } else {
+            self.hartid.load(core::sync::atomic::Ordering::Relaxed)
+        }
     }
 }
 
 static CPU_ID: RiscvCpuId = RiscvCpuId::new();
 
-struct UartConsole;
-
-unsafe impl Sync for UartConsole {}
-
-impl PlatformConsole for UartConsole {
-    fn putc(&self, ch: u8) {
-        arch::riscv::sbi::debug_console_putchar(ch);
-    }
+fn sbi_putc(ch: u8) {
+    arch::riscv::sbi::debug_console_putchar(ch);
 }
 
-static UART_CONSOLE: UartConsole = UartConsole;
+static UART_CONSOLE: FunctionConsole = FunctionConsole { putc_fn: sbi_putc };
 
 fn external_irq_handler() {
     let irq = plic::claim();
@@ -106,7 +110,7 @@ fn external_irq_handler() {
         return;
     }
 
-    let _ = DriverManager::dispatch_irq(irq);
+    kernel::irq::handle_irq(irq as usize);
     plic::complete(irq);
 }
 
@@ -121,16 +125,22 @@ impl Platform for RiscvGeneric {
     }
 
     fn register_driver_factories() {
-        #[cfg(feature = "driver_esp32s31_uart")]
-        let _ = DriverManager::register_factory(&Esp32s31UartFactory);
         #[cfg(feature = "driver_ns16550a")]
-        let _ = DriverManager::register_factory(&Ns16550aFactory);
+        if let Err(_) = DriverManager::register_factory(&Ns16550aFactory) {
+            kernel::kwarn!("ns16550a_uart: factory register failed");
+        }
         #[cfg(feature = "driver_virtio_blk")]
-        let _ = DriverManager::register_factory(&VirtioBlkFactory);
+        if let Err(_) = DriverManager::register_factory(&VirtioBlkFactory) {
+            kernel::kwarn!("virtio_blk: factory register failed");
+        }
         #[cfg(feature = "driver_virtio_gpu")]
-        let _ = DriverManager::register_factory(&VirtioGpuFactory);
+        if let Err(_) = DriverManager::register_factory(&VirtioGpuFactory) {
+            kernel::kwarn!("virtio_gpu: factory register failed");
+        }
         #[cfg(feature = "driver_virtio_rng")]
-        let _ = DriverManager::register_factory(&VirtioRngFactory);
+        if let Err(_) = DriverManager::register_factory(&VirtioRngFactory) {
+            kernel::kwarn!("virtio_rng: factory register failed");
+        }
     }
 
     fn early_init() {
@@ -143,6 +153,8 @@ impl Platform for RiscvGeneric {
         } else {
             kernel::kdebug!("FDT: DTB address = {:#x}", dtb);
         }
+
+        start_secondary_harts();
     }
 
     fn init_irqs() {
@@ -152,9 +164,7 @@ impl Platform for RiscvGeneric {
             clic::init();
             if clic::is_configured() {
                 arch::riscv::trap::set_trap_vector_clic();
-                unsafe {
-                    kernel::arch::EXTERNAL_IRQ_ID_HANDLER = Some(external_irq_id_handler);
-                }
+                kernel::arch::set_external_irq_id_handler(external_irq_id_handler);
             }
         }
 
@@ -162,16 +172,14 @@ impl Platform for RiscvGeneric {
             plic::configure(info.plic_base, info.plic_irq_sources);
             plic::init();
             if plic::is_configured() {
-                unsafe {
-                    kernel::arch::EXTERNAL_IRQ_HANDLER = Some(external_irq_handler);
-                }
+                kernel::arch::set_external_irq_handler(external_irq_handler);
                 arch::riscv::irq::enable_external_interrupts();
             }
         }
     }
 
     fn init_memory() {
-        mmu::init_sv32_identity_map();
+        mmu::init_identity_map();
     }
 
     fn init_timer() {
@@ -197,6 +205,10 @@ impl Platform for RiscvGeneric {
         }
     }
 
+    fn smp_status() -> SmpStatus {
+        riscv_smp_status()
+    }
+
     fn net_device() -> Option<&'static DynNetDevice> {
         None
     }
@@ -206,64 +218,139 @@ impl Platform for RiscvGeneric {
     }
 }
 
-fn discover_dtb_info() -> RiscvDtbInfo {
-    let dtb = kernel::platform::dtb_addr();
-    if dtb == 0 {
-        return RiscvDtbInfo::fallback();
+fn start_secondary_harts() {
+    if !kernel::generated_config::OPENION_SMP {
+        return;
     }
 
-    let mut info = RiscvDtbInfo::fallback();
-    unsafe {
-        kernel::fdt::walk_nodes(dtb, |node| {
-            if !node.is_available() {
-                return;
-            }
+    unsafe extern "C" {
+        fn secondary_entry();
+    }
 
-            if node.device_type() == Some("memory") {
-                if let Some(reg) = node.first_reg() {
-                    info.memory_base = reg.base;
-                    info.memory_size = reg.size;
-                }
-            }
+    let boot_hart = <arch::riscv::RiscvArch as kernel::arch::Arch>::current_cpu_id() as usize;
+    let max_cpus = kernel::generated_config::OPENION_SMP_MAX_CPUS;
+    let entry = secondary_entry as *const () as usize;
 
-            if let Some(freq) = node.timebase_frequency() {
-                info.cpu_freq_hz = freq;
-            }
+    for hartid in 0..max_cpus {
+        if hartid == boot_hart {
+            continue;
+        }
 
-            if node.compatible_matches("riscv,plic0")
-                || node.compatible_matches("sifive,plic-1.0.0")
-            {
-                if let Some(reg) = node.first_reg() {
-                    info.plic_base = reg.base;
-                }
-                if let Some(ndev) = node.prop_u32("riscv,ndev") {
-                    info.plic_irq_sources = ndev as usize;
-                }
-            }
+        SMP_START_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
+        let ret = arch::riscv::sbi::hart_start(hartid, entry, 0);
+        if ret.error != 0 {
+            SMP_START_FAILURES.fetch_add(1, Ordering::AcqRel);
+            kernel::kwarn!("SMP: hart{} start failed: {}", hartid, ret.error);
+        }
+    }
+}
+fn hart_bit(hartid: usize) -> Option<usize> {
+    if hartid < usize::BITS as usize {
+        Some(1usize << hartid)
+    } else {
+        None
+    }
+}
 
-            if node.compatible_matches("riscv,clic0")
-                || node.compatible_matches("sifive,clic-1.0.0")
-            {
-                if let Some(reg) = node.first_reg() {
-                    info.clic_base = reg.base;
+fn mark_hart_online(hartid: usize, parked: bool) {
+    if let Some(bit) = hart_bit(hartid) {
+        ONLINE_HART_MASK.fetch_or(bit, Ordering::AcqRel);
+        if parked {
+            PARKED_HART_MASK.fetch_or(bit, Ordering::AcqRel);
+        } else {
+            PARKED_HART_MASK.fetch_and(!bit, Ordering::AcqRel);
+        }
+    }
+}
+fn riscv_smp_status() -> SmpStatus {
+    let enabled = kernel::generated_config::OPENION_SMP;
+    let online_mask = ONLINE_HART_MASK.load(Ordering::Acquire);
+    let parked_mask = PARKED_HART_MASK.load(Ordering::Acquire);
+    let active_mask = online_mask & !parked_mask;
+    let start_attempts = SMP_START_ATTEMPTS.load(Ordering::Acquire) as usize;
+    let start_failures = SMP_START_FAILURES.load(Ordering::Acquire) as usize;
+
+    SmpStatus {
+        enabled,
+        possible_cpus: if enabled {
+            kernel::generated_config::OPENION_SMP_MAX_CPUS
+        } else {
+            1
+        },
+        online_cpus: online_mask.count_ones() as usize,
+        active_cpus: active_mask.count_ones() as usize,
+        parked_cpus: parked_mask.count_ones() as usize,
+        boot_cpu: BOOT_HART.load(Ordering::Acquire),
+        current_cpu: <arch::riscv::RiscvArch as kernel::arch::Arch>::current_cpu_id(),
+        online_mask,
+        active_mask,
+        parked_mask,
+        start_attempts,
+        start_failures,
+    }
+}
+fn discover_dtb_info() -> &'static RiscvDtbInfo {
+    DTB_INFO.call_once(|| {
+        let dtb = kernel::platform::dtb_addr();
+        if dtb == 0 {
+            return RiscvDtbInfo::fallback();
+        }
+
+        let mut info = RiscvDtbInfo::fallback();
+        unsafe {
+            kernel::fdt::walk_nodes(dtb, |node| {
+                if !node.is_available() {
+                    return;
                 }
-                if let Some(numints) = node
-                    .prop_u32("riscv,numints")
-                    .or_else(|| node.prop_u32("riscv,num-interrupts"))
-                    .or_else(|| node.prop_u32("riscv,ndev"))
+
+                if node.device_type() == Some("memory") {
+                    if let Some(reg) = node.first_reg() {
+                        info.memory_base = reg.base;
+                        info.memory_size = reg.size;
+                    }
+                }
+
+                if let Some(freq) = node.timebase_frequency() {
+                    info.cpu_freq_hz = freq;
+                }
+
+                if node.compatible_matches("riscv,plic0")
+                    || node.compatible_matches("sifive,plic-1.0.0")
                 {
-                    info.clic_irq_sources = numints as usize;
+                    if let Some(reg) = node.first_reg() {
+                        info.plic_base = reg.base;
+                    }
+                    if let Some(ndev) = node.prop_u32("riscv,ndev") {
+                        info.plic_irq_sources = ndev as usize;
+                    }
                 }
-            }
 
-            if node.compatible_matches("riscv,clint0") || node.compatible_matches("sifive,clint0") {
-                if let Some(reg) = node.first_reg() {
-                    info.clint_base = reg.base;
+                if node.compatible_matches("riscv,clic0")
+                    || node.compatible_matches("sifive,clic-1.0.0")
+                {
+                    if let Some(reg) = node.first_reg() {
+                        info.clic_base = reg.base;
+                    }
+                    if let Some(numints) = node
+                        .prop_u32("riscv,numints")
+                        .or_else(|| node.prop_u32("riscv,num-interrupts"))
+                        .or_else(|| node.prop_u32("riscv,ndev"))
+                    {
+                        info.clic_irq_sources = numints as usize;
+                    }
                 }
-            }
-        });
-    }
-    info
+
+                if node.compatible_matches("riscv,clint0")
+                    || node.compatible_matches("sifive,clint0")
+                {
+                    if let Some(reg) = node.first_reg() {
+                        info.clint_base = reg.base;
+                    }
+                }
+            });
+        }
+        info
+    })
 }
 
 use core::arch::global_asm;
@@ -273,11 +360,43 @@ global_asm!(include_str!("../startup.s"));
 #[cfg(target_pointer_width = "32")]
 global_asm!(include_str!("../startup_rv32.s"));
 
+fn install_direct_trap_vector() {
+    unsafe extern "C" {
+        fn trap_vector();
+    }
+    arch::riscv::trap::set_trap_vector(trap_vector as *const () as usize);
+}
+
+fn init_boot_hart(hartid: usize) {
+    CPU_ID.set(hartid as u32);
+    BOOT_HART.store(hartid as u32, Ordering::Release);
+    mark_hart_online(hartid, false);
+    install_direct_trap_vector();
+}
+
+fn init_secondary_hart(hartid: usize) {
+    <arch::riscv::RiscvArch as kernel::arch::Arch>::disable_global_irq();
+    CPU_ID.set(hartid as u32);
+    install_direct_trap_vector();
+    mark_hart_online(hartid, true);
+}
+
+fn park_current_hart() -> ! {
+    loop {
+        <arch::riscv::RiscvArch as kernel::arch::Arch>::idle_hint();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_secondary_main(hartid: usize, _opaque: usize) -> ! {
+    init_secondary_hart(hartid);
+    park_current_hart();
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
-    CPU_ID.set(hartid as u32);
-
     clear_bss();
+    init_boot_hart(hartid);
 
     let dtb_addr = if dtb_pa == 0 {
         DEFAULT_DTB_ADDR
@@ -286,12 +405,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     };
     kernel::platform::set_dtb_addr(dtb_addr);
 
-    unsafe extern "C" {
-        fn trap_vector();
-    }
-    arch::riscv::trap::set_trap_vector(trap_vector as *const () as usize);
-
-    kernel::boot::<RiscvGeneric, arch::riscv::RiscvArch>(app::root_task);
+    kernel::boot::<RiscvGeneric, arch::riscv::RiscvArch>();
 }
 
 fn clear_bss() {

@@ -11,7 +11,7 @@ use crate::sync::Mutex;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "mcu_profile")]
-const KERNEL_HEAP_SIZE: usize = 8 * 1024;
+const KERNEL_HEAP_SIZE: usize = 4 * 1024;
 #[cfg(not(feature = "mcu_profile"))]
 const KERNEL_HEAP_SIZE: usize = crate::generated_config::OPENION_KERNEL_HEAP_SIZE;
 

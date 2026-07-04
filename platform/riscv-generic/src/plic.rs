@@ -54,9 +54,23 @@ pub fn init() {
 
     plic.init_context(context_id());
 
+    // Enable IRQs for all sources discovered from DTB.
+    // Drivers should call enable_irq() for their specific IRQs instead.
     let irq_count = IRQ_COUNT.load(Ordering::Acquire);
     for irq in 1..=irq_count.min(u32::MAX as usize) {
         plic.enable_irq(context_id(), irq as u32, 1);
+    }
+}
+
+pub fn enable_irq(irq: u32, priority: u32) {
+    if let Some(plic) = controller() {
+        plic.enable_irq(context_id(), irq, priority);
+    }
+}
+
+pub fn disable_irq(irq: u32) {
+    if let Some(plic) = controller() {
+        plic.enable_irq(context_id(), irq, 0);
     }
 }
 

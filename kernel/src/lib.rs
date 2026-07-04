@@ -25,10 +25,10 @@ pub mod version;
 use arch::Arch;
 use platform::{Platform, PlatformConfig};
 
-pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
+pub fn boot<P: Platform, A: Arch>() -> ! {
     arch::init::<A>();
     P::init_console();
-    P::discover_early_devices();
+    platform::set_smp_status_provider(P::smp_status);
     P::register_driver_factories();
     P::early_init();
 
@@ -49,7 +49,7 @@ pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
         // FDT auto-probing: discover and init drivers from device tree.
         let fdt_count = driver::manager::DriverManager::auto_probe_fdt();
         if fdt_count > 0 {
-            kinfo!("FDT auto-probed {} driver(s)", fdt_count);
+            kinfo!("driver_manager: auto-probed {} driver(s)", fdt_count);
         }
     }
 
@@ -65,7 +65,7 @@ pub fn boot<P: Platform, A: Arch>(root_task_entry: fn() -> !) -> ! {
     net::init::<P>();
 
     kinfo!("Setting up root process...");
-    sched::Scheduler::init_system_tasks(root_task_entry);
+    sched::Scheduler::init_system_tasks(process::root_task);
 
     kinfo!("Starting scheduler...");
     // Pick the first task
@@ -86,12 +86,12 @@ fn auto_drivers_init<P: Platform>() {
     for i in 0..drivers.len() {
         let drv = drivers[i];
         if let Err(_e) = driver::manager::DriverManager::register_driver(drv) {
-            kerror!("Failed to register driver: {}", drv.name());
+            kerror!("{}: register failed", drv.name());
         } else {
             if let Err(_e) = drv.auto_init() {
-                kerror!("Failed to init driver: {}", drv.name());
+                kerror!("{}: init failed", drv.name());
             } else {
-                kdebug!("Driver registered & initialized: {}", drv.name());
+                kdebug!("{}: registered and initialized", drv.name());
             }
         }
     }
@@ -109,71 +109,10 @@ fn register_dev_files() {
     let mut gpio_idx: u32 = 0;
     let mut net_idx: u32 = 0;
 
-    driver::manager::DriverManager::for_each_driver(|drv| {
-        let dev_name = if drv.as_block_device().is_some() {
-            blk_idx += 1;
-            let idx = blk_idx - 1;
-            // format "blkN"
-            let mut buf = [0u8; 16];
-            let s = if idx == 0 {
-                "blk0"
-            } else if idx == 1 {
-                "blk1"
-            } else {
-                "blk2"
-            };
-            let b = s.as_bytes();
-            let len = b.len().min(15);
-            buf[..len].copy_from_slice(&b[..len]);
-            (buf, len)
-        } else if drv.as_char_device().is_some() {
-            char_idx += 1;
-            let idx = char_idx - 1;
-            let mut buf = [0u8; 16];
-            let s = if idx == 0 {
-                "ttyS0"
-            } else if idx == 1 {
-                "ttyS1"
-            } else {
-                "ttyS2"
-            };
-            let b = s.as_bytes();
-            let len = b.len().min(15);
-            buf[..len].copy_from_slice(&b[..len]);
-            (buf, len)
-        } else if drv.as_gpio_controller().is_some() {
-            gpio_idx += 1;
-            let idx = gpio_idx - 1;
-            let mut buf = [0u8; 16];
-            let s = if idx == 0 {
-                "gpio0"
-            } else if idx == 1 {
-                "gpio1"
-            } else {
-                "gpio2"
-            };
-            let b = s.as_bytes();
-            let len = b.len().min(15);
-            buf[..len].copy_from_slice(&b[..len]);
-            (buf, len)
-        } else if drv.as_net_device().is_some() {
-            net_idx += 1;
-            let idx = net_idx - 1;
-            let mut buf = [0u8; 16];
-            let s = if idx == 0 {
-                "eth0"
-            } else if idx == 1 {
-                "eth1"
-            } else {
-                "eth2"
-            };
-            let b = s.as_bytes();
-            let len = b.len().min(15);
-            buf[..len].copy_from_slice(&b[..len]);
-            (buf, len)
-        } else {
-            return;
-        };
+    driver::manager::DriverManager::for_each_block_device(|_| {
+        let idx = blk_idx;
+        blk_idx += 1;
+        let dev_name = format_dev_name("blk", idx);
         let name_str = core::str::from_utf8(&dev_name.0[..dev_name.1]).unwrap_or("");
         match fs::lookup(dev, name_str) {
             Ok(_) => {}
@@ -183,6 +122,81 @@ fn register_dev_files() {
             }
         }
     });
+
+    driver::manager::DriverManager::for_each_char_device(|_| {
+        let idx = char_idx;
+        char_idx += 1;
+        let dev_name = format_dev_name("ttyS", idx);
+        let name_str = core::str::from_utf8(&dev_name.0[..dev_name.1]).unwrap_or("");
+        match fs::lookup(dev, name_str) {
+            Ok(_) => {}
+            Err(_) => {
+                let _ = fs::create_file(dev, name_str);
+                kdebug!("VFS: created /dev/{}", name_str);
+            }
+        }
+    });
+
+    driver::manager::DriverManager::for_each_gpio_controller(|_| {
+        let idx = gpio_idx;
+        gpio_idx += 1;
+        let dev_name = format_dev_name("gpio", idx);
+        let name_str = core::str::from_utf8(&dev_name.0[..dev_name.1]).unwrap_or("");
+        match fs::lookup(dev, name_str) {
+            Ok(_) => {}
+            Err(_) => {
+                let _ = fs::create_file(dev, name_str);
+                kdebug!("VFS: created /dev/{}", name_str);
+            }
+        }
+    });
+
+    driver::manager::DriverManager::for_each_net_device(|_| {
+        let idx = net_idx;
+        net_idx += 1;
+        let dev_name = format_dev_name("eth", idx);
+        let name_str = core::str::from_utf8(&dev_name.0[..dev_name.1]).unwrap_or("");
+        match fs::lookup(dev, name_str) {
+            Ok(_) => {}
+            Err(_) => {
+                let _ = fs::create_file(dev, name_str);
+                kdebug!("VFS: created /dev/{}", name_str);
+            }
+        }
+    });
+}
+
+fn format_dev_name(prefix: &str, idx: u32) -> ([u8; 16], usize) {
+    let mut buf = [0u8; 16];
+    let mut pos = 0;
+    for &b in prefix.as_bytes() {
+        if pos >= 15 {
+            break;
+        }
+        buf[pos] = b;
+        pos += 1;
+    }
+    // Write index digits
+    let mut tmp = [0u8; 10];
+    let mut len = 0;
+    let mut n = idx;
+    loop {
+        tmp[len] = b'0' + (n % 10) as u8;
+        len += 1;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    // Reverse digits
+    for i in (0..len).rev() {
+        if pos >= 15 {
+            break;
+        }
+        buf[pos] = tmp[i];
+        pos += 1;
+    }
+    (buf, pos)
 }
 
 #[panic_handler]
