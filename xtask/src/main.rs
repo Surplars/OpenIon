@@ -32,13 +32,12 @@ struct PlatformSpec {
     supports_async_rt: bool,
     supports_hypervisor: bool,
     supports_ns16550a: bool,
-    supports_esp32s31_uart: bool,
     supports_cmsdk_uart: bool,
-    supports_stm32l4x5_usart: bool,
     supports_virtio_blk: bool,
     supports_virtio_gpu: bool,
     supports_virtio_rng: bool,
     supports_lan9118: bool,
+    supports_mcu_profile: bool,
 }
 
 const PLATFORMS: &[PlatformSpec] = &[
@@ -55,13 +54,12 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: true,
         supports_ns16550a: true,
-        supports_esp32s31_uart: true,
         supports_cmsdk_uart: false,
-        supports_stm32l4x5_usart: false,
         supports_virtio_blk: true,
         supports_virtio_gpu: true,
         supports_virtio_rng: true,
         supports_lan9118: false,
+        supports_mcu_profile: false,
     },
     PlatformSpec {
         name: "qemu-virt-riscv",
@@ -76,13 +74,12 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: true,
         supports_ns16550a: true,
-        supports_esp32s31_uart: false,
         supports_cmsdk_uart: false,
-        supports_stm32l4x5_usart: false,
         supports_virtio_blk: true,
         supports_virtio_gpu: true,
         supports_virtio_rng: true,
         supports_lan9118: false,
+        supports_mcu_profile: false,
     },
     PlatformSpec {
         name: "ionsoc-verilator",
@@ -97,13 +94,32 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: false,
         supports_ns16550a: true,
-        supports_esp32s31_uart: false,
         supports_cmsdk_uart: false,
-        supports_stm32l4x5_usart: false,
         supports_virtio_blk: false,
         supports_virtio_gpu: false,
         supports_virtio_rng: false,
         supports_lan9118: false,
+        supports_mcu_profile: false,
+    },
+    PlatformSpec {
+        name: "stm32f103-bluepill",
+        package: "stm32f103-bluepill",
+        default_target: "thumbv7m-none-eabi",
+        linker_script: "platform/stm32f103-bluepill/linker.ld",
+        arch: ArchKind::Arm,
+        supports_qemu_run: false,
+        supports_riscv_s_mode: false,
+        supports_riscv_m_mode: false,
+        default_riscv_s_mode: false,
+        supports_async_rt: false,
+        supports_hypervisor: false,
+        supports_ns16550a: false,
+        supports_cmsdk_uart: false,
+        supports_virtio_blk: false,
+        supports_virtio_gpu: false,
+        supports_virtio_rng: false,
+        supports_lan9118: false,
+        supports_mcu_profile: true,
     },
     PlatformSpec {
         name: "qemu-an521",
@@ -118,34 +134,12 @@ const PLATFORMS: &[PlatformSpec] = &[
         supports_async_rt: true,
         supports_hypervisor: false,
         supports_ns16550a: false,
-        supports_esp32s31_uart: false,
         supports_cmsdk_uart: true,
-        supports_stm32l4x5_usart: false,
         supports_virtio_blk: false,
         supports_virtio_gpu: false,
         supports_virtio_rng: false,
         supports_lan9118: true,
-    },
-    PlatformSpec {
-        name: "qemu-stm32l475",
-        package: "qemu-stm32l475",
-        default_target: "thumbv7m-none-eabi",
-        linker_script: "platform/qemu-stm32l475/linker.ld",
-        arch: ArchKind::Arm,
-        supports_qemu_run: true,
-        supports_riscv_s_mode: false,
-        supports_riscv_m_mode: false,
-        default_riscv_s_mode: false,
-        supports_async_rt: false,
-        supports_hypervisor: false,
-        supports_ns16550a: false,
-        supports_esp32s31_uart: false,
-        supports_cmsdk_uart: false,
-        supports_stm32l4x5_usart: true,
-        supports_virtio_blk: false,
-        supports_virtio_gpu: false,
-        supports_virtio_rng: false,
-        supports_lan9118: false,
+        supports_mcu_profile: false,
     },
 ];
 
@@ -176,7 +170,7 @@ enum Commands {
     },
     /// Build a platform through Ionix-generated configuration.
     Build {
-        /// Platform override: riscv-generic, qemu-virt-riscv, ionsoc-verilator, qemu-an521, or qemu-stm32l475.
+        /// Platform override: riscv-generic, qemu-virt-riscv, ionsoc-verilator, qemu-an521, or stm32f103-bluepill.
         #[arg(long, short = 'p')]
         platform: Option<String>,
         /// Config file override.
@@ -188,7 +182,7 @@ enum Commands {
     },
     /// Launch QEMU after building. Avoid this in agent sessions.
     Run {
-        /// Platform override: riscv-generic, qemu-virt-riscv, ionsoc-verilator, qemu-an521, or qemu-stm32l475.
+        /// Platform override: riscv-generic, qemu-virt-riscv, ionsoc-verilator, qemu-an521, or stm32f103-bluepill.
         #[arg(long, short = 'p')]
         platform: Option<String>,
         /// Config file override.
@@ -223,9 +217,7 @@ struct BuildConfig {
     async_rt: bool,
     builtin_shell: bool,
     driver_ns16550a: bool,
-    driver_esp32s31_uart: bool,
     driver_cmsdk_uart: bool,
-    driver_stm32l4x5_usart: bool,
     driver_virtio_blk: bool,
     driver_virtio_gpu: bool,
     driver_virtio_rng: bool,
@@ -262,6 +254,8 @@ impl BuildConfig {
                 cmd.args([
                     "-kernel",
                     &kernel,
+                    "-smp",
+                    "1",
                     "-global",
                     "virtio-mmio.force-legacy=false",
                     "-device",
@@ -280,11 +274,6 @@ impl BuildConfig {
             "qemu-an521" => {
                 let mut cmd = Command::new("qemu-system-arm");
                 cmd.args(["-M", "mps2-an521", "-nographic", "-kernel", &kernel]);
-                Ok(cmd)
-            }
-            "qemu-stm32l475" => {
-                let mut cmd = Command::new("qemu-system-arm");
-                cmd.args(["-M", "b-l475e-iot01a", "-nographic", "-kernel", &kernel]);
                 Ok(cmd)
             }
             other => bail!("unsupported platform '{}'", other),
@@ -450,9 +439,7 @@ fn load_build_config(config_path: Option<&Path>) -> Result<BuildConfig> {
         async_rt: get_bool("OPENION_ASYNC_RT")?,
         builtin_shell: get_bool("OPENION_BUILTIN_SHELL")?,
         driver_ns16550a: get_bool("OPENION_DRIVER_NS16550A")?,
-        driver_esp32s31_uart: get_bool("OPENION_DRIVER_ESP32S31_UART")?,
         driver_cmsdk_uart: get_bool("OPENION_DRIVER_CMSDK_UART")?,
-        driver_stm32l4x5_usart: get_bool("OPENION_DRIVER_STM32L4X5_USART")?,
         driver_virtio_blk: get_bool("OPENION_DRIVER_VIRTIO_BLK")?,
         driver_virtio_gpu: get_bool("OPENION_DRIVER_VIRTIO_GPU")?,
         driver_virtio_rng: get_bool("OPENION_DRIVER_VIRTIO_RNG")?,
@@ -506,6 +493,9 @@ fn apply_platform_constraints(spec: &PlatformSpec, cfg: &mut BuildConfig) {
         }
     }
 
+    if spec.supports_mcu_profile {
+        constrain_bool(spec, &mut cfg.builtin_shell, false, "OPENION_BUILTIN_SHELL");
+    }
     if !spec.supports_async_rt {
         constrain_bool(spec, &mut cfg.async_rt, false, "OPENION_ASYNC_RT");
     }
@@ -525,28 +515,13 @@ fn apply_platform_constraints(spec: &PlatformSpec, cfg: &mut BuildConfig) {
             "OPENION_DRIVER_NS16550A",
         );
     }
-    if !spec.supports_esp32s31_uart {
-        constrain_bool(
-            spec,
-            &mut cfg.driver_esp32s31_uart,
-            false,
-            "OPENION_DRIVER_ESP32S31_UART",
-        );
-    }
+
     if !spec.supports_cmsdk_uart {
         constrain_bool(
             spec,
             &mut cfg.driver_cmsdk_uart,
             false,
             "OPENION_DRIVER_CMSDK_UART",
-        );
-    }
-    if !spec.supports_stm32l4x5_usart {
-        constrain_bool(
-            spec,
-            &mut cfg.driver_stm32l4x5_usart,
-            false,
-            "OPENION_DRIVER_STM32L4X5_USART",
         );
     }
     if !spec.supports_virtio_blk {
@@ -729,12 +704,13 @@ fn collect_features(spec: &PlatformSpec, cfg: &BuildConfig) -> Vec<&'static str>
         features.push("async_rt");
     }
 
+    if spec.supports_mcu_profile {
+        features.push("kernel/mcu_profile");
+    }
+
     if spec.arch == ArchKind::Riscv {
         if cfg.driver_ns16550a {
             features.push("driver_ns16550a");
-        }
-        if cfg.driver_esp32s31_uart {
-            features.push("driver_esp32s31_uart");
         }
     }
 
@@ -759,19 +735,16 @@ fn collect_features(spec: &PlatformSpec, cfg: &BuildConfig) -> Vec<&'static str>
         }
     }
 
-    if package == "qemu-stm32l475" && cfg.driver_stm32l4x5_usart {
-        features.push("mcu_profile");
-        features.push("driver_stm32l4x5_usart");
-    }
-
-    match cfg.net_backend.as_str() {
-        "smoltcp" => {
-            features.push("kernel/use_smoltcp");
+    if !spec.supports_mcu_profile {
+        match cfg.net_backend.as_str() {
+            "smoltcp" => {
+                features.push("kernel/use_smoltcp");
+            }
+            "ionnet" => {
+                features.push("kernel/use_ionnet");
+            }
+            _ => {}
         }
-        "ionnet" => {
-            features.push("kernel/use_ionnet");
-        }
-        _ => {}
     }
 
     features

@@ -31,4 +31,9 @@ impl kernel::arch::Arch for CortexM {
     fn start_first_task() -> ! {
         context::start_first_task();
     }
+
+    fn current_cpu_id() -> u32 {
+        // Cortex-M single-core, always return 0
+        0
+    }
 }

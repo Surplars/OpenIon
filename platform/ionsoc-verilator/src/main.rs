@@ -7,7 +7,7 @@ pub mod timer;
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use kernel::driver::manager::{AnyDriver, DriverManager};
 use kernel::driver::net::DynNetDevice;
-use kernel::log::{CpuIdProvider, PlatformConsole, set_console, set_cpu_id_provider};
+use kernel::log::{CpuIdProvider, FunctionConsole, set_console, set_cpu_id_provider};
 use kernel::platform::{Platform, PlatformConfig};
 #[cfg(feature = "driver_ns16550a")]
 use ns16550a::Ns16550aFactory;
@@ -52,17 +52,9 @@ impl CpuIdProvider for RiscvCpuId {
 
 static CPU_ID: RiscvCpuId = RiscvCpuId::new();
 
-struct EarlyUartConsole;
-
-unsafe impl Sync for EarlyUartConsole {}
-
-impl PlatformConsole for EarlyUartConsole {
-    fn putc(&self, ch: u8) {
-        early_uart_putc(ch);
-    }
-}
-
-static UART_CONSOLE: EarlyUartConsole = EarlyUartConsole;
+static UART_CONSOLE: FunctionConsole = FunctionConsole {
+    putc_fn: early_uart_putc,
+};
 
 fn uart_base() -> usize {
     UART0_BASE.load(Ordering::Relaxed)
@@ -161,7 +153,7 @@ fn external_irq_handler() {
         return;
     }
 
-    let handled = DriverManager::dispatch_irq(irq);
+    let handled = kernel::irq::handle_irq(irq as usize);
     if irq == uart_irq() && !handled {
         let _ = drain_platform_uart_rx();
         let _ = early_uart_irq_pending();
@@ -171,16 +163,13 @@ fn external_irq_handler() {
 
 impl Platform for IonSocVerilator {
     fn early_init() {
+        discover_from_fdt();
+        early_uart_init();
         log_dtb_status();
     }
 
     fn init_console() {
         setup_console_hooks();
-    }
-
-    fn discover_early_devices() {
-        discover_from_fdt();
-        early_uart_init();
     }
 
     fn register_driver_factories() {
@@ -227,7 +216,9 @@ fn setup_console_hooks() {
 
 fn setup_driver_factories() {
     #[cfg(feature = "driver_ns16550a")]
-    let _ = DriverManager::register_factory(&Ns16550aFactory);
+    if let Err(_) = DriverManager::register_factory(&Ns16550aFactory) {
+        kernel::kwarn!("ns16550a_uart: factory register failed");
+    }
 }
 
 fn log_dtb_status() {
@@ -247,9 +238,7 @@ fn setup_irqs() {
             plic::enable_irq(irq, 1);
         }
         arch::riscv::irq::enable_external_interrupts();
-        unsafe {
-            kernel::arch::EXTERNAL_IRQ_HANDLER = Some(external_irq_handler);
-        }
+        kernel::arch::set_external_irq_handler(external_irq_handler);
     } else {
         kernel::kwarn!("PLIC: base address not found in FDT");
     }
@@ -428,7 +417,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     }
     arch::riscv::trap::set_trap_vector(trap_vector as *const () as usize);
 
-    kernel::boot::<IonSocVerilator, arch::riscv::RiscvArch>(app::root_task);
+    kernel::boot::<IonSocVerilator, arch::riscv::RiscvArch>();
 }
 
 fn clear_bss() {

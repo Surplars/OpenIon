@@ -21,11 +21,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 name = "an521"
 version = "0.1.0"
 dependencies = [
- "app",
  "arch",
- "cmsdk_uart",
+ "bsp",
  "kernel",
- "lan9118",
 ]
 
 [[package]]
@@ -88,7 +86,6 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "app"
 version = "0.1.0"
 dependencies = [
- "arch",
  "kernel",
 ]
 
@@ -184,6 +181,17 @@ dependencies = [
 [[package]]
 name = "bootloader"
 version = "0.1.0"
+
+[[package]]
+name = "bsp"
+version = "0.1.0"
+dependencies = [
+ "arch",
+ "cmsdk_uart",
+ "kernel",
+ "lan9118",
+ "ns16550a",
+]
 
 [[package]]
 name = "bumpalo"
@@ -539,13 +547,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "esp32s31_uart"
-version = "0.1.0"
-dependencies = [
- "kernel",
-]
-
-[[package]]
 name = "euclid"
 version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -872,7 +873,6 @@ dependencies = [
 name = "ionsoc-verilator"
 version = "0.1.0"
 dependencies = [
- "app",
  "arch",
  "kernel",
  "ns16550a",
@@ -1349,16 +1349,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qemu-stm32l475"
-version = "0.1.0"
-dependencies = [
- "app",
- "arch",
- "kernel",
- "stm32l4x5_usart",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1542,9 +1532,7 @@ dependencies = [
 name = "riscv-generic"
 version = "0.1.0"
 dependencies = [
- "app",
  "arch",
- "esp32s31_uart",
  "kernel",
  "ns16550a",
  "spin",
@@ -1798,9 +1786,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "stm32l4x5_usart"
+name = "stm32f103-bluepill"
 version = "0.1.0"
 dependencies = [
+ "arch",
+ "bsp",
  "kernel",
 ]
 

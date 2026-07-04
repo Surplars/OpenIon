@@ -1,6 +1,4 @@
-use crate::IonSocVerilator;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use kernel::platform::Platform;
 
 static CLINT_BASE: AtomicUsize = AtomicUsize::new(0);
 
@@ -36,7 +34,7 @@ pub fn set_next_tick() {
         return;
     }
 
-    let cfg = IonSocVerilator::config();
+    let cfg = kernel::platform::get_config();
     let increment = (cfg.cpu_freq_hz / cfg.systick_hz) as u64;
     let deadline = clint.mtime() + increment;
 

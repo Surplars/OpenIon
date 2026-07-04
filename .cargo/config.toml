@@ -1,5 +1,5 @@
 [build]
-target = "riscv64imac-unknown-none-elf"
+# target = "riscv64imac-unknown-none-elf"
 # target = "thumbv8m.main-none-eabihf"
 # target = "thumbv7m-none-eabi"
 
@@ -8,7 +8,7 @@ target = "riscv64imac-unknown-none-elf"
 rustflags = ["-C", "link-arg=-Tplatform/qemu-an521/linker.ld"]
 
 [target.thumbv7m-none-eabi]
-rustflags = ["-C", "link-arg=-Tplatform/qemu-stm32l475/linker.ld"]
+rustflags = ["-C", "link-arg=-Tplatform/stm32f103-bluepill/linker.ld"]
 
 [target.riscv64imac-unknown-none-elf]
 rustflags = ["-C", "link-arg=-Tplatform/riscv-generic/linker.ld"]

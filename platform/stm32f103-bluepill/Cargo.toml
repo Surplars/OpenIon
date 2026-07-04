@@ -1,13 +1,12 @@
 [package]
-name = "an521"
+name = "stm32f103-bluepill"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "an521"
+name = "stm32f103-bluepill"
 test = false
 bench = false
-
 
 [dependencies]
 kernel = { path = "../../kernel", default-features = false }
@@ -15,8 +14,7 @@ arch = { path = "../../arch", default-features = false }
 bsp = { path = "../../bsp", default-features = false }
 
 [features]
-default = ["builtin_shell"]
+default = []
 async_rt = ["kernel/async_rt", "arch/async_rt"]
 builtin_shell = ["kernel/builtin_shell"]
-driver_cmsdk_uart = ["bsp/driver_cmsdk_uart"]
-driver_lan9118 = ["bsp/driver_lan9118"]
+st_hal_bridge = []

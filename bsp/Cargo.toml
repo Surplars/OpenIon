@@ -1,0 +1,17 @@
+[package]
+name = "bsp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arch = { path = "../arch", default-features = false }
+kernel = { path = "../kernel", default-features = false }
+cmsdk_uart = { path = "../drivers/cmsdk_uart", optional = true }
+lan9118 = { path = "../drivers/lan9118", optional = true }
+ns16550a = { path = "../drivers/ns16550a", optional = true }
+
+[features]
+default = []
+driver_cmsdk_uart = ["dep:cmsdk_uart"]
+driver_lan9118 = ["dep:lan9118"]
+driver_ns16550a = ["dep:ns16550a"]

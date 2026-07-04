@@ -1,0 +1,23 @@
+{
+  "rust-analyzer.cargo.target": "thumbv7m-none-eabi",
+  "rust-analyzer.cargo.allTargets": false,
+  "rust-analyzer.cargo.noDefaultFeatures": true,
+  "rust-analyzer.cargo.features": [
+    "kernel/mcu_profile"
+  ],
+  "rust-analyzer.check.workspace": false,
+  "rust-analyzer.check.allTargets": false,
+  "rust-analyzer.check.invocationStrategy": "once",
+  "rust-analyzer.check.overrideCommand": [
+    "cargo",
+    "check",
+    "-p",
+    "stm32f103-bluepill",
+    "--target",
+    "thumbv7m-none-eabi",
+    "--no-default-features",
+    "--features",
+    "kernel/mcu_profile",
+    "--message-format=json"
+  ]
+}
