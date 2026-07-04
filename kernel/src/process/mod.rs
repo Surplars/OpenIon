@@ -1,6 +1,10 @@
 //! ELF loader and process support.
 
 pub mod elf;
+pub mod init;
+pub mod root;
+
+pub use root::root_task;
 
 /// Process ID type
 pub type Pid = u32;

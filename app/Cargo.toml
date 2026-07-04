@@ -9,7 +9,6 @@ bench = false
 
 [dependencies]
 kernel = { path = "../kernel", default-features = false }
-arch = { path = "../arch", default-features = false }
 
 [features]
 default = ["builtin_shell"]

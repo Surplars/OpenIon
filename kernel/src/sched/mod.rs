@@ -1,9 +1,17 @@
 #[cfg(feature = "async_rt")]
 pub mod async_rt;
+pub mod percpu;
 pub mod ready_queue;
 pub mod task;
 pub mod wait;
 
+pub use wait::{Event, EventStats, Semaphore, SemaphoreStats, WaitQueue, WaitQueueStats};
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+use crate::mm::PAGE_SIZE;
 use crate::mm::slab::Slab;
 use crate::sync::Mutex;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -20,22 +28,121 @@ const TASK_CAP: usize = crate::generated_config::OPENION_TASK_CAP;
 pub static TCB_POOL: Slab<TaskControlBlock, TASK_CAP> = Slab::new();
 pub const TASK_SNAPSHOT_CAP: usize = TASK_CAP;
 
-// Accessed from assembly context-switch code via #[no_mangle] symbols.
-// Safety: only written with IRQs disabled + SCHEDULER lock held.
+// Legacy context-switch ABI symbols used directly by RISC-V and Cortex-M assembly.
+// Keep Rust scheduler access behind the helpers below so this can become per-CPU
+// without changing scheduler call sites.
 #[unsafe(no_mangle)]
 pub static mut CURRENT_TCB: *mut TaskControlBlock = core::ptr::null_mut();
 
 #[unsafe(no_mangle)]
 pub static mut NEXT_TCB: *mut TaskControlBlock = core::ptr::null_mut();
 
-pub struct Scheduler {
+#[inline]
+fn active_cpu_mask() -> usize {
+    let mask = crate::platform::smp_status().active_mask;
+    if mask == 0 { 1 } else { mask }
+}
+
+#[inline]
+fn cpu_bit(cpu_id: usize) -> Option<usize> {
+    if cpu_id < usize::BITS as usize {
+        Some(1usize << cpu_id)
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn is_cpu_active(cpu_id: usize) -> bool {
+    cpu_bit(cpu_id)
+        .map(|bit| active_cpu_mask() & bit != 0)
+        .unwrap_or(false)
+}
+
+#[inline]
+fn current_scheduler_cpu_id() -> usize {
+    let current = percpu::current_cpu_id().raw() as usize % percpu::max_cpus();
+    if is_cpu_active(current) { current } else { 0 }
+}
+#[inline]
+fn context_switch_abi_current_task_ptr() -> *mut TaskControlBlock {
+    let current = unsafe { CURRENT_TCB };
+    sync_current_task_shadow(current);
+    current
+}
+
+#[inline]
+fn context_switch_abi_next_task_ptr() -> *mut TaskControlBlock {
+    unsafe { NEXT_TCB }
+}
+
+#[inline]
+fn context_switch_abi_set_next_task_ptr(task: *mut TaskControlBlock) {
+    percpu::set_next_task_ptr(task);
+    unsafe {
+        NEXT_TCB = task;
+    }
+}
+
+#[inline]
+fn sync_current_task_shadow(task: *mut TaskControlBlock) {
+    if percpu::current_task_ptr() != task {
+        percpu::set_current_task_ptr(task);
+    }
+}
+
+#[inline]
+pub(crate) fn current_task_ptr() -> *mut TaskControlBlock {
+    context_switch_abi_current_task_ptr()
+}
+
+#[inline]
+fn set_next_task_ptr(task: *mut TaskControlBlock) {
+    context_switch_abi_set_next_task_ptr(task);
+}
+
+#[inline]
+fn keep_current_task() {
+    set_next_task_ptr(current_task_ptr());
+}
+
+#[inline]
+pub(crate) fn has_current_task() -> bool {
+    !current_task_ptr().is_null()
+}
+
+/// Per-CPU scheduler state.
+struct CpuScheduler {
     ready_queue: ReadyQueue,
-    task_id_counter: AtomicU32,
     idle_task: Option<TaskId>,
-    sleep_queue: *mut TaskControlBlock,
     preempt_pending: bool,
     context_switches: u64,
     preemptions: u64,
+    /// Number of work-stealing attempts from this CPU.
+    steal_attempts: u64,
+    /// Number of successful work-steals.
+    steal_successes: u64,
+}
+
+impl CpuScheduler {
+    const fn new() -> Self {
+        Self {
+            ready_queue: ReadyQueue::new(),
+            idle_task: None,
+            preempt_pending: false,
+            context_switches: 0,
+            preemptions: 0,
+            steal_attempts: 0,
+            steal_successes: 0,
+        }
+    }
+}
+
+pub struct Scheduler {
+    /// Per-CPU scheduler states (single element when SMP disabled).
+    cpu_scheds: [CpuScheduler; percpu::max_cpus()],
+    task_id_counter: AtomicU32,
+    sleep_queue: *mut TaskControlBlock,
 }
 
 unsafe impl Send for Scheduler {}
@@ -61,40 +168,49 @@ pub struct SchedulerStats {
     pub context_switches: u64,
     pub preemptions: u64,
     pub preempt_pending: bool,
+    pub current_cpu: usize,
+    pub active_cpu_mask: usize,
+    /// Total work-stealing attempts across all CPUs.
+    pub steal_attempts: u64,
+    /// Successful work-steals across all CPUs.
+    pub steal_successes: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct ContextSwitchAbiSnapshot {
+    pub current_abi: usize,
+    pub next_abi: usize,
+    pub current_shadow: usize,
+    pub next_shadow: usize,
+    pub current_slot: usize,
+    pub next_slot: usize,
 }
 
 impl Scheduler {
     pub fn init() {
         let mut sched = SCHEDULER.lock();
         *sched = Some(Scheduler {
-            ready_queue: ReadyQueue::new(),
+            cpu_scheds: [const { CpuScheduler::new() }; percpu::max_cpus()],
             task_id_counter: AtomicU32::new(0),
-            idle_task: None,
             sleep_queue: core::ptr::null_mut(),
-            preempt_pending: false,
-            context_switches: 0,
-            preemptions: 0,
         });
     }
 
     pub fn init_system_tasks(root_entry: fn() -> !) {
-        let idle_id = Self::create_task(
-            idle_task_entry,
-            unsafe { &mut *core::ptr::addr_of_mut!(IDLE_TASK_STACK) },
-            0,
-            "IDLE",
-        );
+        let num_cpus = percpu::max_cpus();
 
-        if let Some(sched) = SCHEDULER.lock().as_mut() {
-            sched.idle_task = Some(idle_id);
+        // Create one idle task per possible CPU. Inactive/parked CPUs keep their
+        // idle task queued locally until the platform promotes them to active.
+        for cpu_id in 0..num_cpus {
+            let idle_id =
+                Self::create_task_on_cpu(idle_task_entry, idle_task_stack(), 0, "IDLE", cpu_id);
+
+            if let Some(sched) = SCHEDULER.lock().as_mut() {
+                sched.cpu_scheds[cpu_id].idle_task = Some(idle_id);
+            }
         }
 
-        Self::create_task(
-            root_entry,
-            unsafe { &mut *core::ptr::addr_of_mut!(ROOT_TASK_STACK) },
-            1,
-            "ROOT",
-        );
+        Self::create_task(root_entry, root_task_stack(), 1, "ROOT");
     }
 
     pub fn create_task(
@@ -103,11 +219,19 @@ impl Scheduler {
         priority: Priority,
         name: &'static str,
     ) -> TaskId {
+        Self::create_task_on_cpu(entry, stack, priority, name, current_scheduler_cpu_id())
+    }
+
+    fn create_task_on_cpu(
+        entry: fn() -> !,
+        stack: &'static mut [usize],
+        priority: Priority,
+        name: &'static str,
+        target_cpu: usize,
+    ) -> TaskId {
         let priority = priority.min(MAX_PRIORITY);
         let entry_addr = entry as usize;
-        let initial_sp = unsafe {
-            (crate::arch::INIT_TASK_STACK_FN.expect("Arch not initialized"))(stack, entry_addr)
-        };
+        let initial_sp = crate::arch::init_task_stack(stack, entry_addr);
 
         let tcb_val = TaskControlBlock::new(
             0,
@@ -128,10 +252,14 @@ impl Scheduler {
                     tcb_ptr.as_mut().id = id;
                 }
 
-                if sched.ready_queue.push(unsafe { tcb_ptr.as_mut() }) {
-                    sched.request_preempt_for(priority);
+                let cpu_id = target_cpu % percpu::max_cpus();
+                let cpu_sched = &mut sched.cpu_scheds[cpu_id];
+                if cpu_sched.ready_queue.push(unsafe { tcb_ptr.as_mut() }) {
+                    cpu_sched.preempt_pending = Self::check_preempt_needed(cpu_sched, priority);
+                    id
+                } else {
+                    u32::MAX
                 }
-                id
             } else {
                 u32::MAX
             }
@@ -139,6 +267,10 @@ impl Scheduler {
         crate::arch::enable_irq();
         if id != u32::MAX {
             Self::yield_if_preempt_pending();
+        } else {
+            unsafe {
+                TCB_POOL.free(tcb_ptr);
+            }
         }
         id
     }
@@ -157,7 +289,6 @@ impl Scheduler {
                     let task = unsafe { &mut *curr };
                     let next = task.next;
 
-                    // Simple tick comparison, handles wrap-around assuming ticks are within an ok range
                     if current_tick.wrapping_sub(task.wakeup_tick) < (u32::MAX / 2) {
                         // Wake up!
                         if prev.is_null() {
@@ -170,8 +301,18 @@ impl Scheduler {
 
                         task.state = TaskState::Ready;
                         task.next = core::ptr::null_mut();
-                        if sched.ready_queue.push(task) {
-                            sched.request_preempt_for(task.priority);
+
+                        // Push to appropriate CPU's run queue based on affinity
+                        let cpu_id = Self::select_cpu_for_task(sched, task);
+                        let cpu_sched = &mut sched.cpu_scheds[cpu_id];
+                        if cpu_sched.ready_queue.push(task) {
+                            cpu_sched.preempt_pending =
+                                Self::check_preempt_needed(cpu_sched, task.priority);
+                        } else {
+                            task.state = TaskState::Sleeping;
+                            task.wakeup_tick = current_tick;
+                            task.next = sched.sleep_queue;
+                            sched.sleep_queue = curr;
                         }
                     } else {
                         prev = curr;
@@ -189,7 +330,8 @@ impl Scheduler {
         let ret = {
             let mut lock = SCHEDULER.lock();
             if let Some(sched) = lock.as_mut() {
-                sched.schedule_locked()
+                let cpu_id = current_scheduler_cpu_id();
+                Self::schedule_cpu_locked(sched, cpu_id)
             } else {
                 false
             }
@@ -199,22 +341,18 @@ impl Scheduler {
     }
 
     /// Schedule only if a higher-priority task is waiting.
-    ///
-    /// This is intended for trap/IRQ return paths. It sets NEXT_TCB when a
-    /// switch is needed; the architecture return path performs the actual
-    /// context switch.
     pub fn schedule_if_preempt_pending() -> bool {
         crate::arch::disable_irq();
         let ret = {
             let mut lock = SCHEDULER.lock();
             if let Some(sched) = lock.as_mut() {
-                if sched.preempt_pending && sched.has_higher_ready_than_current() {
-                    sched.schedule_locked()
+                let cpu_id = current_scheduler_cpu_id();
+                let cpu_sched = &mut sched.cpu_scheds[cpu_id];
+                if cpu_sched.preempt_pending && Self::has_higher_ready_than_current(cpu_sched) {
+                    Self::schedule_cpu_locked(sched, cpu_id)
                 } else {
-                    sched.preempt_pending = false;
-                    unsafe {
-                        NEXT_TCB = CURRENT_TCB;
-                    }
+                    cpu_sched.preempt_pending = false;
+                    keep_current_task();
                     false
                 }
             } else {
@@ -230,7 +368,9 @@ impl Scheduler {
         let Some(sched) = lock.as_ref() else {
             return false;
         };
-        sched.preempt_pending && sched.has_higher_ready_than_current()
+        let cpu_id = current_scheduler_cpu_id();
+        let cpu_sched = &sched.cpu_scheds[cpu_id];
+        cpu_sched.preempt_pending && Self::has_higher_ready_than_current(cpu_sched)
     }
 
     pub fn yield_if_preempt_pending() {
@@ -246,7 +386,7 @@ impl Scheduler {
         {
             let mut lock = SCHEDULER.lock();
             if let Some(sched) = lock.as_mut() {
-                let current = unsafe { CURRENT_TCB };
+                let current = current_task_ptr();
                 if !current.is_null() {
                     let task = unsafe { &mut *current };
                     task.state = TaskState::Sleeping;
@@ -270,14 +410,15 @@ impl Scheduler {
         let terminated = {
             let mut lock = SCHEDULER.lock();
             if let Some(sched) = lock.as_mut() {
-                let current = unsafe { CURRENT_TCB };
+                let current = current_task_ptr();
                 if current.is_null() {
                     false
                 } else {
                     let task = unsafe { &mut *current };
                     task.state = TaskState::Terminated;
                     task.next = core::ptr::null_mut();
-                    sched.schedule_locked()
+                    let cpu_id = current_scheduler_cpu_id();
+                    Self::schedule_cpu_locked(sched, cpu_id)
                 }
             } else {
                 false
@@ -288,12 +429,12 @@ impl Scheduler {
     }
 
     pub(crate) fn current_task_ptr() -> *mut TaskControlBlock {
-        unsafe { CURRENT_TCB }
+        current_task_ptr()
     }
 
     pub(crate) fn block_current_task_irq_disabled() -> bool {
         let _lock = SCHEDULER.lock();
-        let current = unsafe { CURRENT_TCB };
+        let current = current_task_ptr();
         if current.is_null() {
             false
         } else {
@@ -323,8 +464,13 @@ impl Scheduler {
                     task.state = TaskState::Ready;
                     task.wakeup_tick = 0;
                     task.next = core::ptr::null_mut();
-                    if sched.ready_queue.push(task) {
-                        sched.request_preempt_for(task.priority);
+
+                    // Select CPU based on affinity
+                    let cpu_id = Self::select_cpu_for_task(sched, task);
+                    let cpu_sched = &mut sched.cpu_scheds[cpu_id];
+                    if cpu_sched.ready_queue.push(task) {
+                        cpu_sched.preempt_pending =
+                            Self::check_preempt_needed(cpu_sched, task.priority);
                         true
                     } else {
                         task.state = TaskState::Blocked;
@@ -355,25 +501,49 @@ impl Scheduler {
 
         // RISC-V enters the scheduler from the breakpoint trap. Cortex-M
         // reaches here after NEXT_TCB has already been selected above.
-        unsafe {
-            (crate::arch::YIELD_CPU_FN.expect("Arch not initialized"))();
-        }
+        crate::arch::yield_cpu();
     }
 
+    pub fn context_switch_abi_snapshot() -> ContextSwitchAbiSnapshot {
+        let current_abi = context_switch_abi_current_task_ptr() as usize;
+        ContextSwitchAbiSnapshot {
+            current_abi,
+            next_abi: context_switch_abi_next_task_ptr() as usize,
+            current_shadow: percpu::current_task_ptr() as usize,
+            next_shadow: percpu::next_task_ptr() as usize,
+            current_slot: percpu::current_task_slot() as usize,
+            next_slot: percpu::next_task_slot() as usize,
+        }
+    }
     pub fn stats() -> SchedulerStats {
         let lock = SCHEDULER.lock();
         if let Some(sched) = lock.as_ref() {
+            let cpu_id = current_scheduler_cpu_id();
+            let cpu_sched = &sched.cpu_scheds[cpu_id];
+
+            // Aggregate work-stealing stats across all CPUs
+            let mut total_steal_attempts = 0;
+            let mut total_steal_successes = 0;
+            for cs in sched.cpu_scheds.iter() {
+                total_steal_attempts += cs.steal_attempts;
+                total_steal_successes += cs.steal_successes;
+            }
+
             SchedulerStats {
-                ready_tasks: sched.ready_queue.len(),
-                highest_ready_priority: if sched.ready_queue.is_empty() {
+                ready_tasks: cpu_sched.ready_queue.len(),
+                highest_ready_priority: if cpu_sched.ready_queue.is_empty() {
                     0
                 } else {
-                    sched.ready_queue.peek_highest_priority()
+                    cpu_sched.ready_queue.peek_highest_priority()
                 },
-                current_task: sched.current_task_info(),
-                context_switches: sched.context_switches,
-                preemptions: sched.preemptions,
-                preempt_pending: sched.preempt_pending,
+                current_task: Self::current_task_info_from_global(),
+                context_switches: cpu_sched.context_switches,
+                preemptions: cpu_sched.preemptions,
+                preempt_pending: cpu_sched.preempt_pending,
+                current_cpu: cpu_id,
+                active_cpu_mask: active_cpu_mask(),
+                steal_attempts: total_steal_attempts,
+                steal_successes: total_steal_successes,
             }
         } else {
             SchedulerStats {
@@ -383,6 +553,10 @@ impl Scheduler {
                 context_switches: 0,
                 preemptions: 0,
                 preempt_pending: false,
+                current_cpu: 0,
+                active_cpu_mask: active_cpu_mask(),
+                steal_attempts: 0,
+                steal_successes: 0,
             }
         }
     }
@@ -394,13 +568,16 @@ impl Scheduler {
             let mut snapshot = [const { None }; TASK_SNAPSHOT_CAP];
             let mut count = 0usize;
             if let Some(sched) = lock.as_ref() {
-                if let Some(info) = sched.current_task_info() {
+                if let Some(info) = Self::current_task_info_from_global() {
                     push_task_info(&mut snapshot, &mut count, info);
                 }
 
-                sched.ready_queue.for_each(|task| {
-                    push_task_info(&mut snapshot, &mut count, task_info(task, false));
-                });
+                // Snapshot from all CPU run queues
+                for cpu_sched in sched.cpu_scheds.iter() {
+                    cpu_sched.ready_queue.for_each(|task| {
+                        push_task_info(&mut snapshot, &mut count, task_info(task, false));
+                    });
+                }
 
                 let mut curr = sched.sleep_queue;
                 while !curr.is_null() {
@@ -416,10 +593,12 @@ impl Scheduler {
         (snapshot, count)
     }
 
-    fn schedule_locked(&mut self) -> bool {
-        self.preempt_pending = false;
+    /// Schedule on a specific CPU.
+    fn schedule_cpu_locked(sched: &mut Scheduler, cpu_id: usize) -> bool {
+        let cpu_sched = &mut sched.cpu_scheds[cpu_id];
+        cpu_sched.preempt_pending = false;
 
-        let current = unsafe { CURRENT_TCB };
+        let current = current_task_ptr();
         let mut was_preempted = false;
         let current_running_priority = if current.is_null() {
             None
@@ -432,28 +611,49 @@ impl Scheduler {
             }
         };
 
+        if let Some(current_priority) = current_running_priority {
+            let highest_ready = cpu_sched.ready_queue.peek_highest_priority();
+            if cpu_sched.ready_queue.is_empty() || highest_ready < current_priority {
+                set_next_task_ptr(current);
+                return false;
+            }
+        }
+
         if !current.is_null() {
             let task = unsafe { &mut *current };
             if task.state == TaskState::Running {
                 task.state = TaskState::Ready;
-                let _ = self.ready_queue.push(task);
+                if !cpu_sched.ready_queue.push(task) {
+                    task.state = TaskState::Running;
+                    set_next_task_ptr(current);
+                    return false;
+                }
             }
         }
 
-        if let Some(next) = self.ready_queue.pop_highest() {
+        // Try to get a task from local queue first
+        let mut next = cpu_sched.ready_queue.pop_highest();
+
+        // If local queue is empty, try work-stealing
+        if next.is_none() && percpu::max_cpus() > 1 {
+            next = Self::try_steal_task(sched, cpu_id);
+        }
+
+        if let Some(next) = next {
             next.state = TaskState::Running;
+            next.cpu_id = cpu_id as u32;
             let next_priority = next.priority;
             let next_ptr = next as *mut _;
-            unsafe {
-                NEXT_TCB = next_ptr;
-            }
+            set_next_task_ptr(next_ptr);
             if current != next_ptr {
-                self.context_switches = self.context_switches.wrapping_add(1);
+                sched.cpu_scheds[cpu_id].context_switches =
+                    sched.cpu_scheds[cpu_id].context_switches.wrapping_add(1);
                 if let Some(current_priority) = current_running_priority {
                     was_preempted = next_priority > current_priority;
                 }
                 if was_preempted {
-                    self.preemptions = self.preemptions.wrapping_add(1);
+                    sched.cpu_scheds[cpu_id].preemptions =
+                        sched.cpu_scheds[cpu_id].preemptions.wrapping_add(1);
                 }
                 true
             } else {
@@ -461,21 +661,81 @@ impl Scheduler {
             }
         } else {
             // Ready queue empty: keep running the current task.
-            unsafe {
-                NEXT_TCB = current;
-            }
+            set_next_task_ptr(current);
             false
         }
     }
 
-    fn request_preempt_for(&mut self, priority: Priority) {
-        if self.priority_preempts_current(priority) {
-            self.preempt_pending = true;
+    /// Try to steal a task from another CPU's run queue.
+    fn try_steal_task(sched: &mut Scheduler, cpu_id: usize) -> Option<&mut TaskControlBlock> {
+        let num_cpus = percpu::max_cpus();
+        sched.cpu_scheds[cpu_id].steal_attempts += 1;
+
+        // Try to steal from other CPUs, starting from the next one
+        for offset in 1..num_cpus {
+            let victim_id = (cpu_id + offset) % num_cpus;
+            if !is_cpu_active(victim_id) {
+                continue;
+            }
+
+            // Only steal if victim has enough tasks
+            if sched.cpu_scheds[victim_id].ready_queue.len() > 1 {
+                // Use raw pointer to split borrow - we know cpu_id != victim_id
+                let victim_queue = &mut sched.cpu_scheds[victim_id].ready_queue as *mut ReadyQueue;
+                let task_ptr = unsafe { (*victim_queue).pop_lowest_raw() };
+
+                if !task_ptr.is_null() {
+                    let task = unsafe { &mut *task_ptr };
+                    // Check affinity
+                    if task.can_run_on(cpu_id as u32) {
+                        sched.cpu_scheds[cpu_id].steal_successes += 1;
+                        return Some(task);
+                    } else {
+                        // Task can't run on this CPU, push it back
+                        unsafe {
+                            (*victim_queue).push_raw(task_ptr);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Select the best CPU for a task based on affinity and load.
+    fn select_cpu_for_task(sched: &Scheduler, task: &TaskControlBlock) -> usize {
+        match task.affinity {
+            task::CpuAffinity::Pin(cpu) => {
+                let target = cpu as usize % percpu::max_cpus();
+                if is_cpu_active(target) {
+                    target
+                } else {
+                    current_scheduler_cpu_id()
+                }
+            }
+            task::CpuAffinity::Any => {
+                // Find the active CPU with the shortest run queue.
+                let mut best_cpu = current_scheduler_cpu_id();
+                let mut best_len = usize::MAX;
+                for (i, cpu_sched) in sched.cpu_scheds.iter().enumerate() {
+                    if !is_cpu_active(i) {
+                        continue;
+                    }
+                    let len = cpu_sched.ready_queue.len();
+                    if len < best_len {
+                        best_len = len;
+                        best_cpu = i;
+                    }
+                }
+                best_cpu
+            }
         }
     }
 
-    fn priority_preempts_current(&self, priority: Priority) -> bool {
-        let current = unsafe { CURRENT_TCB };
+    /// Check if a new task priority should trigger preemption.
+    fn check_preempt_needed(_cpu_sched: &CpuScheduler, priority: Priority) -> bool {
+        let current = current_task_ptr();
         if current.is_null() {
             return false;
         }
@@ -483,17 +743,19 @@ impl Scheduler {
         task.state == TaskState::Running && priority > task.priority
     }
 
-    fn has_higher_ready_than_current(&self) -> bool {
-        let current = unsafe { CURRENT_TCB };
-        if current.is_null() || self.ready_queue.is_empty() {
+    /// Check if there's a higher priority task ready than the current one.
+    fn has_higher_ready_than_current(cpu_sched: &CpuScheduler) -> bool {
+        let current = current_task_ptr();
+        if current.is_null() || cpu_sched.ready_queue.is_empty() {
             return false;
         }
         let task = unsafe { &*current };
-        task.state == TaskState::Running && self.ready_queue.peek_highest_priority() > task.priority
+        task.state == TaskState::Running
+            && cpu_sched.ready_queue.peek_highest_priority() > task.priority
     }
 
-    fn current_task_info(&self) -> Option<TaskInfo> {
-        let current = unsafe { CURRENT_TCB };
+    fn current_task_info_from_global() -> Option<TaskInfo> {
+        let current = current_task_ptr();
         if current.is_null() {
             None
         } else {
@@ -502,20 +764,132 @@ impl Scheduler {
     }
 
     fn can_preempt_now() -> bool {
-        unsafe { !CURRENT_TCB.is_null() && crate::arch::ARCH_CRIT_NEST == 0 }
+        has_current_task() && !crate::arch::in_critical_section()
     }
+}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+#[repr(C, align(4096))]
+struct GuardedStack<const WORDS: usize> {
+    guard: [u8; PAGE_SIZE],
+    stack: [usize; WORDS],
+}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+impl<const WORDS: usize> GuardedStack<WORDS> {
+    const fn new() -> Self {
+        Self {
+            guard: [0; PAGE_SIZE],
+            stack: [0; WORDS],
+        }
+    }
+}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+unsafe fn guarded_stack_slice<const WORDS: usize>(
+    stack: *mut GuardedStack<WORDS>,
+) -> &'static mut [usize] {
+    unsafe { &mut (*stack).stack }
+}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+unsafe fn guarded_stack_guard<const WORDS: usize>(stack: *mut GuardedStack<WORDS>) -> usize {
+    unsafe { (*stack).guard.as_ptr() as usize }
+}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+pub fn for_each_stack_guard(mut f: impl FnMut(usize)) {
+    unsafe {
+        f(guarded_stack_guard(core::ptr::addr_of_mut!(
+            IDLE_TASK_STACK
+        )));
+        f(guarded_stack_guard(core::ptr::addr_of_mut!(
+            ROOT_TASK_STACK
+        )));
+    }
+}
+
+#[cfg(any(
+    feature = "mcu_profile",
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub fn for_each_stack_guard(_f: impl FnMut(usize)) {}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+fn idle_task_stack() -> &'static mut [usize] {
+    unsafe { guarded_stack_slice(core::ptr::addr_of_mut!(IDLE_TASK_STACK)) }
+}
+
+#[cfg(any(
+    feature = "mcu_profile",
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+fn idle_task_stack() -> &'static mut [usize] {
+    unsafe { &mut *core::ptr::addr_of_mut!(IDLE_TASK_STACK) }
+}
+
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+fn root_task_stack() -> &'static mut [usize] {
+    unsafe { guarded_stack_slice(core::ptr::addr_of_mut!(ROOT_TASK_STACK)) }
+}
+
+#[cfg(any(
+    feature = "mcu_profile",
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+fn root_task_stack() -> &'static mut [usize] {
+    unsafe { &mut *core::ptr::addr_of_mut!(ROOT_TASK_STACK) }
 }
 
 #[cfg(feature = "mcu_profile")]
 static mut IDLE_TASK_STACK: [usize; 128] = [0; 128];
-#[cfg(not(feature = "mcu_profile"))]
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
 static mut IDLE_TASK_STACK: [usize; crate::generated_config::OPENION_IDLE_STACK_WORDS] =
     [0; crate::generated_config::OPENION_IDLE_STACK_WORDS];
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+static mut IDLE_TASK_STACK: GuardedStack<{ crate::generated_config::OPENION_IDLE_STACK_WORDS }> =
+    GuardedStack::new();
 #[cfg(feature = "mcu_profile")]
 static mut ROOT_TASK_STACK: [usize; 512] = [0; 512];
-#[cfg(not(feature = "mcu_profile"))]
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
 static mut ROOT_TASK_STACK: [usize; crate::generated_config::OPENION_ROOT_STACK_WORDS] =
     [0; crate::generated_config::OPENION_ROOT_STACK_WORDS];
+#[cfg(all(
+    not(feature = "mcu_profile"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+static mut ROOT_TASK_STACK: GuardedStack<{ crate::generated_config::OPENION_ROOT_STACK_WORDS }> =
+    GuardedStack::new();
 
 fn idle_task_entry() -> ! {
     loop {

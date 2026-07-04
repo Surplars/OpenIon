@@ -270,7 +270,9 @@ fn complete_command(
         "vm",
         "mount",
         "mem",
+        "top",
         "cpuinfo",
+        "smp",
         "tasks",
         "ps",
         "drivers",
@@ -528,7 +530,9 @@ fn execute_command(state: &mut ShellState, input: &str) {
         "mount" => cmd_mount(args),
         "mem" => cmd_mem(),
         "cpuinfo" => cmd_cpuinfo(),
+        "smp" => cmd_smp(),
         "tasks" | "ps" => cmd_tasks(),
+        "top" => cmd_top(),
         "drivers" => cmd_drivers(),
         "term" => cmd_term(),
         "gpio" => cmd_gpio(),
@@ -548,7 +552,9 @@ fn cmd_help() {
     kpln!("  clear             Clear screen");
     kpln!("  uptime            Show system uptime");
     kpln!("  mem               Show memory info");
+    kpln!("  top               Show system status overview");
     kpln!("  cpuinfo           Show CPU and ISA info");
+    kpln!("  smp               Show SMP bring-up status");
     kpln!("  tasks / ps        List running tasks");
     kpln!("  drivers           List registered drivers");
     kpln!("  term              List terminal devices");
@@ -616,6 +622,23 @@ fn cmd_async(args: &str) {
     kpln!("  async wake        Signal demo async event");
 }
 
+fn cmd_smp() {
+    let status = crate::platform::smp_status();
+    kpln!("SMP:");
+    kpln!("  enabled         : {}", status.enabled);
+    kpln!("  possible_cpus   : {}", status.possible_cpus);
+    kpln!("  online_cpus     : {}", status.online_cpus);
+    kpln!("  active_cpus     : {}", status.active_cpus);
+    kpln!("  parked_cpus     : {}", status.parked_cpus);
+    kpln!("  online_mask     : {:#x}", status.online_mask);
+    kpln!("  active_mask     : {:#x}", status.active_mask);
+    kpln!("  parked_mask     : {:#x}", status.parked_mask);
+    kpln!("  boot_cpu        : {}", status.boot_cpu);
+    kpln!("  current_cpu     : {}", status.current_cpu);
+    kpln!("  start_attempts  : {}", status.start_attempts);
+    kpln!("  start_failures  : {}", status.start_failures);
+}
+
 fn cmd_mem() {
     let stats = crate::mm::stats();
     kpln!("Memory:");
@@ -661,7 +684,13 @@ fn cmd_cpuinfo() {
     }
     let cpu_count = print_dtb_cpus();
     kpln!("  possible cpus    : {}", cpu_count);
-    kpln!("  online cpus      : 1 (boot cpu only)");
+    let smp = crate::platform::smp_status();
+    kpln!("  online cpus      : {}", smp.online_cpus);
+    kpln!("  active cpus      : {}", smp.active_cpus);
+    kpln!("  parked cpus      : {}", smp.parked_cpus);
+    kpln!("  online mask      : {:#x}", smp.online_mask);
+    kpln!("  active mask      : {:#x}", smp.active_mask);
+    kpln!("  parked mask      : {:#x}", smp.parked_mask);
     kpln!(
         "  arch             : {}",
         if crate::generated_config::OPENION_RISCV_XLEN_64 {
@@ -858,65 +887,46 @@ fn print_dtb_cpus() -> usize {
 }
 
 fn cmd_drivers() {
+    let stats = crate::driver::manager::DriverManager::registry_stats();
     kpln!("Drivers:");
+    kpln!(
+        "  registry: drivers={}, factories={}, block={}, char={}, term={}, gpio={}, fb={}, net={}, rng={}, probe_matches={}, probe_ok={}, probe_fail={}",
+        stats.registered_drivers,
+        stats.registered_factories,
+        stats.registered_block_devices,
+        stats.registered_char_devices,
+        stats.registered_terminal_devices,
+        stats.registered_gpio_controllers,
+        stats.registered_framebuffer_devices,
+        stats.registered_net_devices,
+        stats.registered_rng_devices,
+        stats.probe_matches,
+        stats.probe_successes,
+        stats.probe_failures
+    );
+    kpln!(
+        "  irq_dispatch: total={}, hits={}, misses={}, fast_slots={}",
+        stats.irq_dispatches,
+        stats.irq_driver_hits,
+        stats.irq_driver_misses,
+        stats.irq_fast_slots
+    );
+    kpln!(
+        "  irq_fast: hits={}, fallbacks={}, conflicts={}",
+        stats.irq_fast_hits,
+        stats.irq_fast_fallbacks,
+        stats.irq_fast_conflicts
+    );
     let mut count = 0usize;
     crate::driver::manager::DriverManager::for_each_driver(|drv| {
         count += 1;
+        let class = driver_class_name(drv);
         kp!(
-            "  {}: state={}, class=",
+            "  {}: state={}, class={}",
             drv.name(),
-            driver_state_name(drv.state())
+            driver_state_name(drv.state()),
+            class
         );
-        let mut any_class = false;
-        if drv.as_block_device().is_some() {
-            kp!("block");
-            any_class = true;
-        }
-        if drv.as_char_device().is_some() {
-            if any_class {
-                kp!(",");
-            }
-            kp!("char");
-            any_class = true;
-        }
-        if drv.as_terminal_device().is_some() {
-            if any_class {
-                kp!(",");
-            }
-            kp!("terminal");
-            any_class = true;
-        }
-        if drv.as_gpio_controller().is_some() {
-            if any_class {
-                kp!(",");
-            }
-            kp!("gpio");
-            any_class = true;
-        }
-        if drv.as_framebuffer_device().is_some() {
-            if any_class {
-                kp!(",");
-            }
-            kp!("framebuffer");
-            any_class = true;
-        }
-        if drv.as_net_device().is_some() {
-            if any_class {
-                kp!(",");
-            }
-            kp!("net");
-            any_class = true;
-        }
-        if drv.as_rng_device().is_some() {
-            if any_class {
-                kp!(",");
-            }
-            kp!("rng");
-            any_class = true;
-        }
-        if !any_class {
-            kp!("other");
-        }
         kpln!("");
     });
     if count == 0 {
@@ -927,19 +937,17 @@ fn cmd_drivers() {
 fn cmd_term() {
     kpln!("Terminal devices:");
     let mut count = 0usize;
-    crate::driver::manager::DriverManager::for_each_driver(|drv| {
-        if let Some(term) = drv.as_terminal_device() {
-            let size = term.size();
-            kpln!(
-                "  {}: {}x{}, mode={}, state={}",
-                drv.name(),
-                size.columns,
-                size.rows,
-                terminal_mode_name(term.mode()),
-                driver_state_name(drv.state())
-            );
-            count += 1;
-        }
+    crate::driver::manager::DriverManager::for_each_terminal_device(|term| {
+        let size = term.size();
+        kpln!(
+            "  {}: {}x{}, mode={}, state={}",
+            term.name(),
+            size.columns,
+            size.rows,
+            terminal_mode_name(term.mode()),
+            driver_state_name(term.state())
+        );
+        count += 1;
     });
     if count == 0 {
         kpln!("  none");
@@ -949,16 +957,14 @@ fn cmd_term() {
 fn cmd_gpio() {
     kpln!("GPIO controllers:");
     let mut count = 0usize;
-    crate::driver::manager::DriverManager::for_each_driver(|drv| {
-        if let Some(gpio) = drv.as_gpio_controller() {
-            kpln!(
-                "  {}: {} pin(s), state={}",
-                drv.name(),
-                gpio.pin_count(),
-                driver_state_name(drv.state())
-            );
-            count += 1;
-        }
+    crate::driver::manager::DriverManager::for_each_gpio_controller(|gpio| {
+        kpln!(
+            "  {}: {} pin(s), state={}",
+            gpio.name(),
+            gpio.pin_count(),
+            driver_state_name(gpio.state())
+        );
+        count += 1;
     });
     if count == 0 {
         kpln!("  none");
@@ -967,6 +973,7 @@ fn cmd_gpio() {
 
 fn cmd_irq() {
     let stats = crate::irq::stats();
+    let driver_stats = crate::driver::manager::DriverManager::registry_stats();
     kpln!("IRQs:");
     kpln!(
         "  configured={}, registered_handlers={}",
@@ -978,6 +985,19 @@ fn cmd_irq() {
         stats.handled,
         stats.unhandled,
         stats.out_of_range
+    );
+    kpln!(
+        "  driver_dispatch={}, driver_hits={}, driver_misses={}",
+        driver_stats.irq_dispatches,
+        driver_stats.irq_driver_hits,
+        driver_stats.irq_driver_misses
+    );
+    kpln!(
+        "  driver_fast_slots={}, fast_hits={}, fast_fallbacks={}, fast_conflicts={}",
+        driver_stats.irq_fast_slots,
+        driver_stats.irq_fast_hits,
+        driver_stats.irq_fast_fallbacks,
+        driver_stats.irq_fast_conflicts
     );
     kp!("  last=");
     print_irq_value(stats.last_irq);
@@ -992,6 +1012,10 @@ fn print_irq_value(irq: u32) {
     } else {
         kp!("{}", irq);
     }
+}
+
+fn driver_class_name(drv: &dyn crate::driver::manager::AnyDriver) -> &'static str {
+    drv.device_class_name()
 }
 
 fn driver_state_name(state: crate::driver::DeviceState) -> &'static str {
@@ -1015,7 +1039,9 @@ fn cmd_tasks() {
     let stats = crate::sched::Scheduler::stats();
     kpln!("Tasks:");
     kpln!(
-        "  scheduler: ready={}, top_prio={}, switches={}, preempts={}, pending={}",
+        "  scheduler: cpu={}, active_mask={:#x}, ready={}, top_prio={}, switches={}, preempts={}, pending={}",
+        stats.current_cpu,
+        stats.active_cpu_mask,
         stats.ready_tasks,
         stats.highest_ready_priority,
         stats.context_switches,
@@ -1043,6 +1069,117 @@ fn cmd_tasks() {
             task_state_name(task.state),
             task.stack_size,
             task.wakeup_tick,
+            task.name,
+        );
+    }
+    if count > shown {
+        kpln!("  ... {} more", count - shown);
+    }
+}
+
+fn cmd_top() {
+    let sched_stats = crate::sched::Scheduler::stats();
+    let cs_abi = crate::sched::Scheduler::context_switch_abi_snapshot();
+    let mm_stats = crate::mm::stats();
+    let irq_stats = crate::irq::stats();
+
+    kpln!("System Status:");
+    kpln!("========================================");
+
+    // Uptime
+    let ticks = crate::timer::ticks();
+    let secs = ticks / 1000;
+    let ms = ticks % 1000;
+    kpln!("Uptime: {}.{:03}s", secs, ms);
+
+    // Scheduler
+    kpln!("----------------------------------------");
+    kpln!("Scheduler:");
+    kpln!("  current_cpu    : {}", sched_stats.current_cpu);
+    kpln!("  active_mask    : {:#x}", sched_stats.active_cpu_mask);
+    kpln!("  ready_tasks    : {}", sched_stats.ready_tasks);
+    kpln!("  top_priority   : {}", sched_stats.highest_ready_priority);
+    kpln!("  ctx_switches   : {}", sched_stats.context_switches);
+    kpln!("  preemptions    : {}", sched_stats.preemptions);
+    kpln!("  preempt_pending: {}", sched_stats.preempt_pending);
+    kpln!("  steal_attempts : {}", sched_stats.steal_attempts);
+    kpln!("  steal_successes: {}", sched_stats.steal_successes);
+    kpln!("  current_abi   : {:#x}", cs_abi.current_abi);
+    kpln!("  next_abi      : {:#x}", cs_abi.next_abi);
+    kpln!("  current_shadow: {:#x}", cs_abi.current_shadow);
+    kpln!("  next_shadow   : {:#x}", cs_abi.next_shadow);
+    kpln!("  current_slot  : {:#x}", cs_abi.current_slot);
+    kpln!("  next_slot     : {:#x}", cs_abi.next_slot);
+    if let Some(current) = sched_stats.current_task {
+        kpln!(
+            "  current_task   : {}#{} prio={}",
+            current.name,
+            current.id,
+            current.priority
+        );
+    }
+
+    // CPU/SMP info
+    let smp_status = crate::platform::smp_status();
+    kpln!("----------------------------------------");
+    kpln!("CPUs:");
+    kpln!("  enabled        : {}", smp_status.enabled);
+    kpln!("  possible       : {}", smp_status.possible_cpus);
+    kpln!("  online         : {}", smp_status.online_cpus);
+    kpln!("  active         : {}", smp_status.active_cpus);
+    kpln!("  parked         : {}", smp_status.parked_cpus);
+    kpln!("  online_mask    : {:#x}", smp_status.online_mask);
+    kpln!("  active_mask    : {:#x}", smp_status.active_mask);
+    kpln!("  parked_mask    : {:#x}", smp_status.parked_mask);
+    kpln!("  current_cpu    : {}", smp_status.current_cpu);
+
+    // Memory
+    kpln!("----------------------------------------");
+    kpln!("Memory:");
+    kpln!("  heap_used      : {} bytes", mm_stats.heap.used);
+    kpln!("  heap_total     : {} bytes", mm_stats.heap.size);
+    kpln!("  heap_allocs    : {}", mm_stats.heap.allocations);
+    kpln!("  heap_failed    : {}", mm_stats.heap.failed_allocations);
+    kpln!("  frames_free    : {} pages", mm_stats.frames.free_pages);
+    kpln!("  frames_total   : {} pages", mm_stats.frames.total_pages);
+    let frame_free_kb = mm_stats.frames.free_pages * crate::mm::PAGE_SIZE / 1024;
+    let frame_total_kb = mm_stats.frames.total_pages * crate::mm::PAGE_SIZE / 1024;
+    kpln!(
+        "  frames_free_kb : {} KiB / {} KiB",
+        frame_free_kb,
+        frame_total_kb
+    );
+
+    // IRQ
+    kpln!("----------------------------------------");
+    kpln!("IRQs:");
+    kpln!("  handled        : {}", irq_stats.handled);
+    kpln!("  unhandled      : {}", irq_stats.unhandled);
+    kpln!("  out_of_range   : {}", irq_stats.out_of_range);
+
+    // Tasks
+    kpln!("----------------------------------------");
+    kpln!("Tasks:");
+    kpln!(
+        "  {:>4} {:>4} {:<8} {:>6} {:<8} {}",
+        "ID",
+        "PRI",
+        "STATE",
+        "STACK",
+        "CPU",
+        "NAME"
+    );
+
+    let (tasks, count) = crate::sched::Scheduler::task_snapshot();
+    let shown = count.min(tasks.len());
+    for task in tasks.iter().take(shown).flatten() {
+        kpln!(
+            "  {:>4} {:>4} {:<8} {:>6} {:<8} {}",
+            task.id,
+            task.priority,
+            task_state_name(task.state),
+            task.stack_size,
+            if task.current { "*" } else { " " },
             task.name,
         );
     }

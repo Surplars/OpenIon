@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::future::Future;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use crate::sync::Mutex;
@@ -14,7 +14,7 @@ const MAX_ASYNC_TASKS: usize = crate::generated_config::OPENION_ASYNC_TASK_SLOTS
 
 static EXECUTOR: Mutex<Executor> = Mutex::new(Executor::new());
 static HEARTBEAT_TICKS: AtomicU32 = AtomicU32::new(0);
-static DEMO_EVENT: AsyncEvent = AsyncEvent::new();
+static DEMO_EVENT: super::Event<1> = super::Event::new();
 static DEMO_EVENTS: AtomicU32 = AtomicU32::new(0);
 static RX_BYTES: AtomicU32 = AtomicU32::new(0);
 static RX_EVENTS: AtomicU32 = AtomicU32::new(0);
@@ -156,64 +156,6 @@ impl Executor {
 unsafe impl Send for Executor {}
 unsafe impl Sync for Executor {}
 
-pub struct AsyncEvent {
-    signaled: AtomicBool,
-    waiter: AtomicUsize,
-}
-
-impl AsyncEvent {
-    pub const fn new() -> Self {
-        Self {
-            signaled: AtomicBool::new(false),
-            waiter: AtomicUsize::new(NO_TASK),
-        }
-    }
-
-    pub fn signal(&self) {
-        self.signaled.store(true, Ordering::Release);
-        let task_idx = self.waiter.swap(NO_TASK, Ordering::AcqRel);
-        if task_idx != NO_TASK {
-            wake_task(task_idx);
-        }
-    }
-
-    pub fn wait(&self) -> EventWait<'_> {
-        EventWait { event: self }
-    }
-}
-
-pub struct EventWait<'a> {
-    event: &'a AsyncEvent,
-}
-
-impl Future for EventWait<'_> {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.event.signaled.swap(false, Ordering::AcqRel) {
-            return Poll::Ready(());
-        }
-
-        let task_idx = CURRENT_POLL_TASK.load(Ordering::Acquire);
-        if task_idx == NO_TASK {
-            return Poll::Pending;
-        }
-
-        self.event.waiter.store(task_idx, Ordering::Release);
-        if self.event.signaled.swap(false, Ordering::AcqRel) {
-            let _ = self.event.waiter.compare_exchange(
-                task_idx,
-                NO_TASK,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-            Poll::Ready(())
-        } else {
-            Poll::Pending
-        }
-    }
-}
-
 pub fn spawn<F>(name: &'static str, future: F) -> Result<usize, SpawnError>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -242,6 +184,9 @@ where
     Err(SpawnError::NoSlots)
 }
 
+pub fn current_poll_task() -> usize {
+    CURRENT_POLL_TASK.load(Ordering::Acquire)
+}
 pub fn executor_main() -> ! {
     loop {
         if crate::generated_config::OPENION_ASYNC_RT {
@@ -346,7 +291,7 @@ pub fn heartbeat_task() -> impl Future<Output = ()> + Send + 'static {
 pub fn demo_event_task() -> impl Future<Output = ()> + Send + 'static {
     async {
         loop {
-            DEMO_EVENT.wait().await;
+            DEMO_EVENT.wait_async().await;
             DEMO_EVENTS.fetch_add(1, Ordering::AcqRel);
         }
     }

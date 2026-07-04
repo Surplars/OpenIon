@@ -119,16 +119,14 @@ fn write_console(buf: &[u8]) -> SysResult {
     let mut saw_terminal = false;
     let mut first_error: Option<DriverErr> = None;
 
-    DriverManager::for_each_driver(|drv| {
+    DriverManager::for_each_terminal_device(|term| {
         if saw_terminal {
             return;
         }
-        if let Some(term) = drv.as_terminal_device() {
-            saw_terminal = true;
-            match term.write_buffer(buf) {
-                Ok(n) => written = n,
-                Err(e) => first_error = Some(e),
-            }
+        saw_terminal = true;
+        match term.write_buffer(buf) {
+            Ok(n) => written = n,
+            Err(e) => first_error = Some(e),
         }
     });
 
